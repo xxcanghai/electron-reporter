@@ -1,4 +1,4 @@
-/** @fileOverview 给electron/nw等类似客户端用的日志上报模块, 推荐在子线程/渲染线程使用 **/
+/** @fileOverview 给electron/nw等类似客户端用的日志上报模块 **/
 
 import ip from 'ip'
 import network from 'network'
@@ -13,16 +13,6 @@ import _ from 'lodash'
 import log4js from 'log4js'
 import Queue from './ReportQueue'
 
-const LEVELS = {
-	INFO: 'info',
-	DEBUG: 'debug',
-	WARN: 'warn',
-	ERROR: 'error'
-}
-
-const IS_WIN = process.platform === 'win32'
-const IS_MAC = process.platform === 'darwin'
-
 // 一些辅助方法
 const reportHelper = {
 	/**
@@ -30,7 +20,9 @@ const reportHelper = {
 	 * @returns {string}
 	 */
 	getPlatform() {
-		return IS_MAC ? 'mac' : 'pc'
+		const IS_WIN = process.platform === 'win32'
+		const IS_MAC = process.platform === 'darwin'
+		return IS_MAC ? 'mac' : (IS_WIN ? 'pc' : 'linux')
 	},
 
 	/**
@@ -111,27 +103,52 @@ const reportHelper = {
 	},
 }
 
-const DFAULT_OPTIONS = {
-	// 上报地址
-	url: '',
-	// log文件存储地址
-	dir: '',
-	// 默认上报级别
-	level: LEVELS.WARN,
-	// 定时上报时间间隔, 即便没积攒达到上报数量阈值，只要达到时间间隔，仍然上报
-	interval: 1000 * 60 * 5,
-	// 上报数量阈值, 积攒到阈值就上报
-	threshold: 10
-}
-
 class Reporter {
 
-	constructor(options = DFAULT_OPTIONS) {
+	static LEVELS = {
+		DEBUG: 1,
+		INFO: 2,
+		WARN: 3,
+		ERROR: 4
+	}
+
+	// static getLevelName (val) {
+	// 	let name = 'INFO'
+	// 	Object.keys(Reporter.LEVELS).forEach(key => {
+	// 		if (Reporter.LEVELS[key] === val) {
+	// 			name = key
+	// 		}
+	// 	})
+	// 	return name.toLowerCase()
+	// }
+
+	static defaultOptions = {
+		// 上报地址
+		url: '',
+		// 设备名字
+		deviceName: '',
+		// 客户端版本号
+		version: '',
+		// log文件存储目录
+		dir: process.cwd(),
+		// 默认上报级别
+		level: Reporter.LEVELS.WARN,
+		// 定时上报时间间隔, 即便没积攒达到上报数量阈值，只要达到时间间隔，仍然上报
+		interval: 1000 * 60 * 5,
+		// 上报数量阈值, 积攒到阈值就上报
+		threshold: 10,
+		// 文件命名的前缀
+		filenamePrefix: '',
+		// 上报时需要ping的域名集合
+		hosts: []
+	}
+
+	constructor(options) {
 		/**
 		 * 初始化配置参数
-		 * @type {{url: string, dir: string, level: string, interval: number, threshold: number}}
+		 * @type {{url: string, deviceName: string, version: string, dir: string, level: string, interval: number, threshold: number, filenamePrefix: string, hosts: array}}
 		 */
-		this.options = Object.assign({}, options)
+		this.options = Object.assign(Reporter.defaultOptions, options)
 		/**
 		 * 处理上报行为的queue
 		 * @type {ReportQueue}
@@ -139,36 +156,61 @@ class Reporter {
 		this.logQueue = new Queue({
 			processFunction: this.report.bind(this)
 		})
-		// 配置log4js
-		log4js.configure({
-			appenders: [
-				{
-					type: 'clustered',
-					appenders: [
-						{
-							type: 'console'
-						},
-						{
-							type: 'file',
-							// absolute: true,
-							numBackups: 0
-						}
-					],
-					category: 'electron-reporter'
-				}
-			]
-		})
 
 		/**
-		 * log4js实例
+		 * log4js实例, 每种类型一个实例, 分文件存储
 		 * @type {Logger}
 		 */
-		this.logger = log4js.getLogger('electron-reporter')
+		this.loggers = {}
+
+		// 根据level生成log4js配置
+		let appenders = Object.keys(Reporter.LEVELS).map((key) => {
+			let appender = this._buildAppender(Reporter.LEVELS)
+			this.loggers[Reporter.LEVELS[key]] = appender.category
+			return appender
+		})
+
+		// 配置log4js
+		log4js.configure({
+			appenders
+		})
+
+		// 根据level把logger实例填充入loggers
+		appenders.forEach(appender => {
+			Object.keys(this.loggers).forEach(key => {
+				if (appender.category === this.loggers[key]) {
+					this.loggers[key] = log4js.getLogger(appender.category)
+				}
+			})
+		})
 		/**
 		 * 定时上报的timer
 		 * @type {*}
 		 */
 		this.timer = setInterval(this.forceProcess.bind(this), this.options.interval)
+	}
+
+	// 每种日志类型创建一个文件, 创建一个logger实例
+	_buildAppender (levelKey) {
+		let { dir, filenamePrefix } = this.options
+		let name = filenamePrefix + levelKey
+		return {
+			type: 'clustered',
+			appenders: [
+				{
+					type: 'console'
+				},
+				{
+					type: 'dateFile',
+					absolute: true,
+					pattern: '-yyyy-MM-dd',
+					filename: path.join(dir, name + '.log'),
+					backups: 2,
+					alwaysIncludePattern: false
+				}
+			],
+			category: name
+		}
 	}
 
 	getDeviceName() {
@@ -184,26 +226,27 @@ class Reporter {
 	}
 
 	// 得到上报的基础参数
-	_buildBaseData() {
+	async _buildBaseData() {
 		return {
-			device: reportHelper.getDevice(),
+			device: reportHelper.getPlatform(),
 			ip: reportHelper.getIP(),
 			time: reportHelper.getTime(),
-			network: reportHelper.getNetworkType(),
-			log_level: this.options.logLevel,
+			network: await reportHelper.getNetworkType(),
+			log_level: this.options.level,
 			version: this.getVersion(),
 			dev_n: this.getDeviceName(),
 			sys_ver: reportHelper.getSystemVersion(),
 			ad: this.getAD(),
-			ping: reportHelper.getPingStatus(this.options.hosts)
+			ping: await reportHelper.getPingStatus(this.options.hosts)
 		}
 	}
 
 	// 得到需要上报的数据
-	_buildData(eventName, params = {}) {
+	async _buildData(eventName, params = {}) {
+		let baseData = await this._buildBaseData()
 		return {
 			event: eventName,
-			data: Object.assign(this._buildBaseData(), params)
+			data: Object.assign(baseData, params)
 		}
 	}
 
@@ -211,40 +254,42 @@ class Reporter {
 	 * 输入日志
 	 * @param eventName
 	 * @param data
-	 * @param type
+	 * @param level
+	 * @returns {Promise.<void>}
 	 */
-	log(eventName, data, type = LEVELS.INFO) {
-		const record = this._buildData(eventName, data)
+	async log(eventName, data, level = Reporter.LEVELS.INFO) {
+		const record = await this._buildData(eventName, data)
+		let logger = this.loggers[level]
 		// 调用log4js 写入log
-		if (type === LEVELS.INFO) {
-			this.logger.info(record)
+		if (level === Reporter.LEVELS.INFO) {
+			logger.info(record)
 		}
-		if (type === LEVELS.DEBUG) {
-			this.logger.debug(record)
+		if (level === Reporter.LEVELS.DEBUG) {
+			logger.debug(record)
 		}
-		if (type === LEVELS.WARN) {
-			this.logger.warn(record)
+		if (level === Reporter.LEVELS.WARN) {
+			logger.warn(record)
 		}
-		if (type === LEVELS.ERROR) {
-			this.logger.error(record)
+		if (level === Reporter.LEVELS.ERROR) {
+			logger.error(record)
 		}
 		this.process()
 	}
 
 	info(eventName, data) {
-		this.log(eventName, data, LEVELS.INFO)
+		return this.log(eventName, data, Reporter.LEVELS.INFO)
 	}
 
 	debug(eventName, data) {
-		this.log(eventName, data, LEVELS.DEBUG)
+		return this.log(eventName, data, Reporter.LEVELS.DEBUG)
 	}
 
 	warn(eventName, data) {
-		this.log(eventName, data, LEVELS.WARN)
+		return this.log(eventName, data, Reporter.LEVELS.WARN)
 	}
 
 	error(eventName, data) {
-		this.log(eventName, data, LEVELS.ERROR)
+		return this.log(eventName, data, Reporter.LEVELS.ERROR)
 	}
 
 	/**
@@ -297,11 +342,11 @@ class Reporter {
 	}
 
 	process(isForce) {
-		let data = this._packageData()
-		// 达到阈值 或者 指明强制上报
-		if (data && isForce) {
-			this.logQueue.pushReport(data, Reporter.responseValidator)
-		}
+		// let data = this._packageData()
+		// // 达到阈值 或者 指明强制上报
+		// if (data && isForce) {
+		// 	this.logQueue.pushReport(data, Reporter.responseValidator)
+		// }
 	}
 
 	/**
