@@ -112,6 +112,8 @@ class Reporter {
 		ERROR: 4
 	}
 
+	static helper = reportHelper
+
 	// static getLevelName (val) {
 	// 	let name = 'INFO'
 	// 	Object.keys(Reporter.LEVELS).forEach(key => {
@@ -148,7 +150,7 @@ class Reporter {
 		 * 初始化配置参数
 		 * @type {{url: string, deviceName: string, version: string, dir: string, level: string, interval: number, threshold: number, filenamePrefix: string, hosts: array}}
 		 */
-		this.options = Object.assign(Reporter.defaultOptions, options)
+		this.options = Object.assign({}, Reporter.defaultOptions, options)
 		/**
 		 * 处理上报行为的queue
 		 * @type {ReportQueue}
@@ -165,7 +167,7 @@ class Reporter {
 
 		// 根据level生成log4js配置
 		let appenders = Object.keys(Reporter.LEVELS).map((key) => {
-			let appender = this._buildAppender(Reporter.LEVELS)
+			let appender = this._buildAppender(key)
 			this.loggers[Reporter.LEVELS[key]] = appender.category
 			return appender
 		})
@@ -191,8 +193,8 @@ class Reporter {
 	}
 
 	// 每种日志类型创建一个文件, 创建一个logger实例
-	_buildAppender (levelKey) {
-		let { dir, filenamePrefix } = this.options
+	_buildAppender(levelKey) {
+		let {dir, filenamePrefix} = this.options
 		let name = filenamePrefix + levelKey
 		return {
 			type: 'clustered',
@@ -205,8 +207,12 @@ class Reporter {
 					absolute: true,
 					pattern: '-yyyy-MM-dd',
 					filename: path.join(dir, name + '.log'),
-					backups: 2,
-					alwaysIncludePattern: false
+					numBackups: 5,
+					alwaysIncludePattern: false,
+					layout: {
+						type: 'pattern',
+						pattern: "%r %p %c => %m%n"
+					},
 				}
 			],
 			category: name
@@ -244,10 +250,10 @@ class Reporter {
 	// 得到需要上报的数据
 	async _buildData(eventName, params = {}) {
 		let baseData = await this._buildBaseData()
-		return {
+		return JSON.stringify({
 			event: eventName,
-			data: Object.assign(baseData, params)
-		}
+			data: Object.assign({}, baseData, params)
+		})
 	}
 
 	/**
@@ -298,39 +304,45 @@ class Reporter {
 	 * @private
 	 */
 	async _packageData() {
-		const { dir } = this.options
+		const {dir} = this.options
 		const files = await fs.readdirAsync(dir)
 
 		let data = []
-		await Promise.each(files, async(file) => {
-			console.log('filefilefile', file)
-			const regex = new RegExp('^[0-9a-zA-Z-]{36}.log$')
-			if (!regex.test(file)) return
-
-			const content = await fs.readFileAsync(path.join(dir, file), 'utf8')
-			const lines = content.split(/\r?\n/g)
-			lines.reduce((acc, line) => {
-				try {
-					acc.push(JSON.parse(line))
-				} catch (e) {
-					//
-				}
-				return acc
-			}, data)
-		})
+		for (let file of files) {
+			const regex = new RegExp('^(WARN|ERROR).log$')
+			if (regex.test(file)) {
+				const content = await fs.readFileAsync(path.join(dir, file), 'utf8')
+				const lines = content.split(/\r?\n/g)
+				lines.reduce((acc, line) => {
+					// 移除空字符
+					line = line.trim()
+					// 去除头部提示信息, 得到真正的json数据
+					if (line.split('=>').length > 1) {
+						line = line.split('=>')[1]
+					}
+					try {
+						acc.push(JSON.parse(line))
+					} catch (e) {
+						//
+					}
+					return acc
+				}, data)
+			}
+		}
 
 		data = _.compact(data)
 
 		if (!data.length) {
 			return
 		}
-
-		const filteredData = _.take(_.sortByAll(data, 'd', function (data) {
-			return -data.t
+		const filteredData = _.take(_.sortBy(data, function (data) {
+			return -data.time
 		}), 500)
 
-		const encData = this.encrypt(JSON.stringify(filteredData))
+		//todo ...这里为了兼容ios端的特殊格式的处理, 之后加个afterParsedData的hook来传参处理吧
+		const encData = reportHelper.encrypt(JSON.stringify(filteredData))
 		const finalData = '=' + encodeURIComponent(encData)
+
 		return finalData
 	}
 
@@ -342,11 +354,15 @@ class Reporter {
 	}
 
 	process(isForce) {
-		// let data = this._packageData()
-		// // 达到阈值 或者 指明强制上报
-		// if (data && isForce) {
-		// 	this.logQueue.pushReport(data, Reporter.responseValidator)
-		// }
+		// 达到阈值 或者 指明强制上报
+		if (isForce) {
+			let data = this._packageData()
+			if (data) {
+				this.logQueue.pushReport(data, Reporter.responseValidator).then(rs => {
+					console.log('job done:::')
+				})
+			}
+		}
 	}
 
 	/**
@@ -356,11 +372,9 @@ class Reporter {
 	 * @private
 	 */
 	static responseValidator(response) {
-		// todo 测试代码 需要删除
-		return true
 		if (response && response.statusCode === 200) {
 			try {
-				const { status } = JSON.parse(response.body)
+				const {status} = JSON.parse(response.body)
 				if (status === 0) {
 					return true
 				}
@@ -399,8 +413,6 @@ class Reporter {
 	 * @private
 	 */
 	async _report2Remote(data, uri) {
-		// todo 测试代码 需要删除
-		return Promise.resolve()
 		const body = data
 
 		const headers = {
