@@ -13,9 +13,24 @@
 ```
   import Reporter from 'electron-reporter'
   let logger = new Reporter({
+    // 上报server地址 必须
     url: 'xxx',
-    dir: process.cwd() + '/logs',
-    interval: 10 * 1000
+    // 设备名字
+    deviceName: '',
+    // 客户端版本号
+    version: '',
+    // log文件存储目录 必须
+    dir: process.cwd(),
+    // 默认上报级别 默认是 3
+    level: 3, // DEBUG: 1, INFO: 2, WARN: 3, ERROR: 4
+    // 定时上报时间间隔 默认5分钟
+    interval: 5 * 1000 * 60,
+    // 一次上报日志数量允许的最大值, 默认 500
+    maxCount: 500,
+    // 日志文件命名的前缀 默认为空
+    filenamePrefix: '',
+    // 上报时需要ping的域名集合, 默认为空
+    hosts: []
   })
 
   let params = {
