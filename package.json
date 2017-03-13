@@ -1,6 +1,6 @@
 {
   "name": "electron-reporter",
-  "version": "0.0.0",
+  "version": "0.0.2",
   "description": "A project for report log in electron or nw",
   "repository": "4f2e/electron-reporter",
   "author": "xingyuzhe <yuzhe.xing@qq.com>",
@@ -15,8 +15,8 @@
     "log",
     "nw"
   ],
-  "main": "index.js",
-  "jsnext:main": "index.es.js",
+  "main": "dist/index.js",
+  "jsnext:main": "dist/index.es.js",
   "eslintConfig": {
     "parser": "babel-eslint",
     "extends": "airbnb/base",
@@ -46,7 +46,7 @@
     "babel-plugin-transform-runtime": "*",
     "babel-preset-es2015": "^6.14.0",
     "babel-preset-es2015-node": "^6.1.1",
-    "babel-preset-es2015-rollup": "*",
+    "babel-preset-es2015-rollup": "^3.0.0",
     "babel-preset-stage-0": "*",
     "babel-register": "*",
     "babelrc-rollup": "*",
@@ -91,6 +91,11 @@
     "start": "easystatic start docs",
     "server": "babel-node dev/server.js"
   },
+  "files": [
+    "dist",
+    "package.json",
+    "README.md"
+  ],
   "dependencies": {
     "d3-queue": "^3.0.4",
     "fs-extra-promise": "^0.4.1",

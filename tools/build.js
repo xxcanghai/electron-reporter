@@ -44,8 +44,7 @@ const banner =
   ' */'
 
 function getConfig(format) {
-  // 打包成独立min文件时就要包含所有模块的代码
-  let external = format === 'min' ? function () { return false } : Object.keys(pkg.dependencies)
+  let external = Object.keys(pkg.dependencies)
   return {
     entry: 'src/index.js',
     format: format === 'min' ? 'umd' : format,
@@ -94,17 +93,14 @@ function buildEntry(opts) {
     // 这里必须放在最前面, 先把一些非commonjs格式的包转成rollup识别的commonjs格式
     // rollup把爹坑死了
     rollupCommonjs(),
-    // 这个插件是为了合并从npm中import进来的包, 打包成独立的min.js用到
-    // 因为rollup主体是不会把npm里面的包打包进去的
-    // rollup把爹坑死了
-    rollupNpm({
-      jsnext: true,
-      main: true,
-    }),
     json(),
     // 这里必须用这个插件 是因为官网示例的 presents-rollup 本身是有问题的, 直接使用根本运行不了
     // rollup把爹坑死了
-    babel(babelrc()),
+    babel({
+	    babelrc: false,
+	    exclude: 'node_modules/**',
+	    presets: ['es2015-rollup', 'stage-0']
+    }),
   ]
   let isMin = opts.env === 'production'
   if (isMin) {
