@@ -2,7 +2,8 @@ import Reporter from '../src'
 
 let logger = new Reporter({
   url: '',
-  dir: process.cwd() + '/logs'
+  dir: process.cwd() + '/logs',
+  interval: 5000
 })
 
 logger.debug('Got cheese.');

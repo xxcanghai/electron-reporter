@@ -10,10 +10,14 @@ import crypto from 'crypto'
 import fs from 'fs-extra-promise'
 import _ from 'lodash'
 import log4js from 'log4js'
+// import moment from 'moment'
 import Queue from './ReportQueue'
 
 // 一些辅助方法
 const reportHelper = {
+	endOfLine() {
+		return os.EOL || '\n'
+	},
 	/**
 	 * 获取当前设备所属平台
 	 * @returns {string}
@@ -113,15 +117,20 @@ class Reporter {
 
 	static helper = reportHelper
 
-	// static getLevelName (val) {
-	// 	let name = 'INFO'
-	// 	Object.keys(Reporter.LEVELS).forEach(key => {
-	// 		if (Reporter.LEVELS[key] === val) {
-	// 			name = key
-	// 		}
-	// 	})
-	// 	return name.toLowerCase()
-	// }
+  /**
+   * 根据level的value取得level的key
+   * @param val
+   * @returns {string}
+   */
+	static getLevelKey (val) {
+		let name
+		Object.keys(Reporter.LEVELS).forEach(key => {
+			if (Reporter.LEVELS[key] === val) {
+        name = key
+			}
+		})
+		return name
+	}
 
 	static defaultOptions = {
 		// 上报地址
@@ -136,8 +145,10 @@ class Reporter {
 		level: Reporter.LEVELS.WARN,
 		// 定时上报时间间隔, 即便没积攒达到上报数量阈值，只要达到时间间隔，仍然上报
 		interval: 1000 * 60 * 5,
-		// 上报数量阈值, 积攒到阈值就上报
-		threshold: 10,
+		// 上报积攒数量阈值, 积攒到阈值就上报
+		threshold: 500,
+		// 一次上报日志数量允许的最大值
+		maxCount: 500,
 		// 文件命名的前缀
 		filenamePrefix: '',
 		// 上报时需要ping的域名集合
@@ -206,8 +217,9 @@ class Reporter {
 					absolute: true,
 					pattern: '-yyyy-MM-dd',
 					filename: path.join(dir, name + '.log'),
-					numBackups: 5,
-					alwaysIncludePattern: false,
+					backups: 10,
+					maxLogSize: 1024 * 1024 * 5,
+					alwaysIncludePattern: true,
 					layout: {
 						type: 'pattern',
 						pattern: "%r %p %c => %m%n"
@@ -255,6 +267,28 @@ class Reporter {
 		})
 	}
 
+  /**
+   * 获取当前日志文件信息
+   * @param level
+   * @returns {{level: *, levelKey: string, filePath}}
+   * @private
+   */
+	_getCurrentFile(level) {
+	  let { dir } = this.options
+    let levelKey = Reporter.getLevelKey(level)
+    let filename = levelKey + '.log'
+    let filePath = path.join(dir, filename)
+    if (!fs.existsSync(filePath)) {
+      fs.openSync(filePath, 'w');
+    }
+    return {
+      level,
+      levelKey,
+      filename,
+      filePath
+    }
+  }
+
 	/**
 	 * 输入日志
 	 * @param eventName
@@ -264,6 +298,14 @@ class Reporter {
 	 */
 	async log(eventName, data, level = Reporter.LEVELS.INFO) {
 		const record = await this._buildData(eventName, data)
+    // 这个手动创建的文件是为了上报用(上报完就删除上报过的数据), 不存在就创建一个
+    let { filePath } = this._getCurrentFile(level)
+
+    // 手动写入日志
+    fs.appendFile(filePath, record + reportHelper.endOfLine())
+
+    // log4js 自动写入日志
+    // log4js写的文件 不做任何处理, 让log4js自动处理(自动根据日期/文件大小分割文件/清除文件等)
 		let logger = this.loggers[level]
 		// 调用log4js 写入log
 		if (level === Reporter.LEVELS.INFO) {
@@ -297,52 +339,109 @@ class Reporter {
 		return this.log(eventName, data, Reporter.LEVELS.ERROR)
 	}
 
+  /**
+   * 获取最近N天的日志文件
+   * @param num
+   * @returns {Promise.<void>}
+   */
+	// async getRecentFiles(num = 7) {
+	// 	const { dir } = this.options
+	// 	const files = await fs.readdirAsync(dir)
+	// 	const regex = new RegExp('^.*\.log\d{4}-\d{2}-\d{2}$')
+	// 	let now = moment()
+	// 	return files.filter(filename => {
+	// 	  if (regex.test(filename)) {
+	// 	    let execResult = /\d{4}-\d{2}-\d{2}/.exec(filename)
+   //      execResult = execResult ? execResult[0] : null
+   //      let diff = moment(execResult, 'YYYY-MM-DD').diff(now, 'days')
+   //      return diff > -num //判断不要改成diff<-num, 存在NaN情况也应删除
+   //    }
+	// 		return false
+	// 	})
+	// }
+
+	/**
+	 * 根据当前日志文件 获取 日志记录/行数
+	 * @private
+	 */
+	async _getCurrentFileLines(level, isUnlinkFile) {
+    const {dir, maxCount} = this.options
+    let { filePath, filename } = this._getCurrentFile(level)
+		const separatorRegex = /\r?\n/g
+
+    let lines = []
+    let leftLines = []
+
+    let content = await fs.readFileAsync(path.join(dir, filename), 'utf8')
+    let curLines = content.split(separatorRegex)
+
+    // 如果指明了要删除文件
+    if (isUnlinkFile) {
+      fs.unlinkSync(filePath)
+    }
+
+    // 根据macCount把数据分成2段
+    if (lines.length > maxCount) {
+      lines = curLines.slice(0, maxCount)
+      leftLines = curLines.slice(maxCount)
+    } else {
+      lines = curLines
+    }
+
+		return {
+      level,
+      maxCount,
+      filename,
+      filePath,
+			lines,
+      leftLines,
+      allLines: curLines.slice(0)
+		}
+	}
+
 	/**
 	 * 组装将要上报的数据
 	 * @returns {Promise.<string>}
 	 * @private
 	 */
-	async _packageData() {
-		const {dir} = this.options
-		const files = await fs.readdirAsync(dir)
+	async _packageData(level) {
+		const linesInfo = await this._getCurrentFileLines(level, true)
 
 		let data = []
-		for (let file of files) {
-			const regex = new RegExp('^(WARN|ERROR).log$')
-			if (regex.test(file)) {
-				const content = await fs.readFileAsync(path.join(dir, file), 'utf8')
-				const lines = content.split(/\r?\n/g)
-				lines.reduce((acc, line) => {
-					// 移除空字符
-					line = line.trim()
-					// 去除头部提示信息, 得到真正的json数据
-					if (line.split('=>').length > 1) {
-						line = line.split('=>')[1]
-					}
-					try {
-						acc.push(JSON.parse(line))
-					} catch (e) {
-						//
-					}
-					return acc
-				}, data)
+		let lines = linesInfo.lines
+
+		lines.reduce((acc, line) => {
+			// 移除空字符
+			line = line.trim()
+			// 去除头部提示信息, 得到真正的json数据
+			if (line.split('=>').length > 1) {
+				line = line.split('=>')[1]
 			}
-		}
+			try {
+				acc.push(JSON.parse(line))
+			} catch (e) {
+				//
+			}
+			return acc
+		}, data)
 
 		data = _.compact(data)
 
 		if (!data.length) {
-			return
+			return linesInfo
 		}
-		const filteredData = _.take(_.sortBy(data, function (data) {
-			return -data.time
-		}), 500)
+		const filteredData = _.sortBy(data, function (data) {
+      return -data.time
+    })
 
 		//todo ...这里为了兼容ios端的特殊格式的处理, 之后加个afterParsedData的hook来传参处理吧
-		const encData = reportHelper.encrypt(JSON.stringify(filteredData))
+    const encData = reportHelper.encrypt(JSON.stringify(filteredData))
 		const finalData = '=' + encodeURIComponent(encData)
 
-		return finalData
+		return {
+			data: finalData,
+			linesInfo
+		}
 	}
 
 	/**
@@ -352,17 +451,43 @@ class Reporter {
 		this.process(true)
 	}
 
-	process(isForce) {
+	async process(isForce) {
 		// 达到阈值 或者 指明强制上报
 		if (isForce) {
-			let data = this._packageData()
-			if (data) {
-				this.logQueue.pushReport(data, Reporter.responseValidator).then(rs => {
-					console.log('job done:::')
-				})
-			}
+		  const { level } = this.options
+      // 得到真正允许上报的级别
+      const filterdLevels = Object.keys(Reporter.LEVELS).filter(key => {
+        return Reporter.LEVELS[key] >= level
+      })
+
+      filterdLevels.forEach(curKey => {
+        this._push2LogQueue(Reporter.LEVELS[curKey])
+      })
 		}
 	}
+
+  /**
+   * 根据level 收集日志push到上报队列
+   * @param level
+   * @returns {Promise.<void>}
+   * @private
+   */
+	async _push2LogQueue(level) {
+    let { data, linesInfo } = await this._packageData(level)
+    if (!data) {
+      return
+    }
+    this.logQueue.pushReport(data, Reporter.responseValidator).then(rs => {
+      // 上报完成后
+      // 如果有余下的数据没上报完, 再手动把没报的数据回写进去
+      console.log('job success::: try clear data')
+      this._recoverData(linesInfo.leftLines, linesInfo.filePath)
+    }).catch(error => {
+      console.log('job fail::: try recover data')
+      // 上报失败再把所有数据回写入当前日志文件
+      this._recoverData(linesInfo.allLines, linesInfo.filePath)
+    })
+  }
 
 	/**
 	 * 校验上报结果
@@ -393,16 +518,20 @@ class Reporter {
 		return this._report2Remote(data, this.options.serverUrl)
 	}
 
-	/**
-	 * 删除当前指定目录下所有日志文件
-	 * @param dir
-	 * @param files
-	 */
-	_deleteLogFiles(dir, files) {
-		files.forEach((file) => {
-			fs.unlink(path.join(dir, file))
-		})
-	}
+  /**
+   * 恢复数据到文件
+    * @param lines
+   * @param filepath
+   * @private
+   */
+  _recoverData(lines, filepath) {
+    if (lines && lines.length) {
+      lines.forEach(line => {
+        const record = JSON.stringify(line) + reportHelper.endOfLine()
+        fs.appendFile(filepath, record)
+      })
+    }
+  }
 
 	/**
 	 * 上报到远程服务器
@@ -426,6 +555,13 @@ class Reporter {
 				}
 			)
 		})
+	}
+
+	/**
+	 * 销毁, 清除定时器, 解绑等
+	 */
+	destroy() {
+		clearInterval(this.timer)
 	}
 }
 
