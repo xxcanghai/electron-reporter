@@ -1,0 +1,9 @@
+dev
+docs
+node_modules
+test
+tools
+.idea
+.DS_Store
+npm-debug.log
+npm-debug.log.*

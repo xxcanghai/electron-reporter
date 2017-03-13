@@ -99,7 +99,8 @@ function buildEntry(opts) {
     babel({
 	    babelrc: false,
 	    exclude: 'node_modules/**',
-	    presets: ['es2015-rollup', 'stage-0']
+	    presets: ['es2015-rollup', 'stage-0'],
+	    runtimeHelpers: true
     }),
   ]
   let isMin = opts.env === 'production'

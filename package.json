@@ -1,6 +1,6 @@
 {
   "name": "electron-reporter",
-  "version": "0.0.2",
+  "version": "0.0.5",
   "description": "A project for report log in electron or nw",
   "repository": "4f2e/electron-reporter",
   "author": "xingyuzhe <yuzhe.xing@qq.com>",
@@ -91,12 +91,8 @@
     "start": "easystatic start docs",
     "server": "babel-node dev/server.js"
   },
-  "files": [
-    "dist",
-    "package.json",
-    "README.md"
-  ],
   "dependencies": {
+    "babel-polyfill": "^6.23.0",
     "d3-queue": "^3.0.4",
     "fs-extra-promise": "^0.4.1",
     "ip": "^1.1.5",
