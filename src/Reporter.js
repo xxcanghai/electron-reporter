@@ -243,13 +243,13 @@ class Reporter {
   }
 
   // 得到上报的基础参数
-  async _buildBaseData() {
+  async _buildBaseData(level) {
     return {
       device: reportHelper.getPlatform(),
       ip: reportHelper.getIP(),
       time: reportHelper.getTime(),
       network: await reportHelper.getNetworkType(),
-      log_level: this.options.level,
+      log_level: level,
       version: this.getVersion(),
       dev_n: this.getDeviceName(),
       sys_ver: reportHelper.getSystemVersion(),
@@ -259,8 +259,8 @@ class Reporter {
   }
 
   // 得到需要上报的数据
-  async _buildData(eventName, params = {}) {
-    let baseData = await this._buildBaseData()
+  async _buildData(eventName, params = {}, level) {
+    let baseData = await this._buildBaseData(level)
     return JSON.stringify({
       event: eventName,
       data: Object.assign({}, baseData, params)
@@ -297,7 +297,7 @@ class Reporter {
    * @returns {Promise.<void>}
    */
   async log(eventName, data, level = Reporter.LEVELS.INFO) {
-    const record = await this._buildData(eventName, data)
+    const record = await this._buildData(eventName, data, level)
     // 这个手动创建的文件是为了上报用(上报完就删除上报过的数据), 不存在就创建一个
     let {filePath} = this._getCurrentFile(level)
 
