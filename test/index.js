@@ -3,7 +3,8 @@ import Reporter from '../src'
 let logger = new Reporter({
   url: '',
   dir: process.cwd() + '/logs',
-  interval: 5000
+  interval: 5000,
+  localLogLevel: 3
 })
 
 logger.debug('Got cheese.');

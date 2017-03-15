@@ -143,6 +143,9 @@ class Reporter {
     dir: process.cwd(),
     // 默认上报级别
     level: Reporter.LEVELS.WARN,
+    // 不同级别类型日志是否完全保存在本地, 默认全部保存在本地
+    // 一旦通过构造函数设置后, 便不可变更, 变更后也是无效的
+    localLogLevel: 0,
     // 定时上报时间间隔, 即便没积攒达到上报数量阈值，只要达到时间间隔，仍然上报
     interval: 1000 * 60 * 5,
     // 上报积攒数量阈值, 积攒到阈值就上报
@@ -161,6 +164,10 @@ class Reporter {
      * @type {{url: string, deviceName: string, version: string, dir: string, level: string, interval: number, threshold: number, filenamePrefix: string, hosts: array}}
      */
     this.options = Object.assign({}, Reporter.defaultOptions, options)
+    const { dir } = this.options
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir)
+    }
     /**
      * 处理上报行为的queue
      * @type {ReportQueue}
@@ -204,30 +211,37 @@ class Reporter {
 
   // 每种日志类型创建一个文件, 创建一个logger实例
   _buildAppender(levelKey) {
-    let {dir, filenamePrefix} = this.options
+    let {dir, filenamePrefix, localLogLevel } = this.options
     let name = filenamePrefix + levelKey
-    return {
+    let level = Reporter.LEVELS[levelKey]
+    let appender = {
       type: 'clustered',
       appenders: [
         {
           type: 'console'
-        },
-        {
-          type: 'dateFile',
-          absolute: true,
-          pattern: '-yyyy-MM-dd',
-          filename: path.join(dir, name + '.log'),
-          backups: 10,
-          maxLogSize: 1024 * 1024 * 5,
-          alwaysIncludePattern: true,
-          layout: {
-            type: 'pattern',
-            pattern: "%r %p %c => %m%n"
-          },
         }
       ],
       category: name
     }
+
+    // 如果当前上报级别大于等于localLogLevel
+    if (level >= localLogLevel) {
+      appender.appenders.push({
+        type: 'dateFile',
+        absolute: true,
+        pattern: '-yyyy-MM-dd',
+        filename: path.join(dir, name + '.log'),
+        backups: 10,
+        maxLogSize: 1024 * 1024 * 5,
+        alwaysIncludePattern: true,
+        layout: {
+          type: 'pattern',
+          pattern: "%r %p %c => %m%n"
+        }
+      })
+    }
+
+    return appender
   }
 
   getDeviceName() {
