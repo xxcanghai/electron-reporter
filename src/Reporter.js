@@ -146,6 +146,8 @@ class Reporter {
     // 不同级别类型日志是否完全保存在本地, 默认全部保存在本地
     // 一旦通过构造函数设置后, 便不可变更, 变更后也是无效的
     localLogLevel: 0,
+    // 是否打印控制台log, 同上
+    consoleLogLevel: 0,
     // 定时上报时间间隔, 即便没积攒达到上报数量阈值，只要达到时间间隔，仍然上报
     interval: 1000 * 60 * 5,
     // 上报积攒数量阈值, 积攒到阈值就上报
@@ -211,20 +213,23 @@ class Reporter {
 
   // 每种日志类型创建一个文件, 创建一个logger实例
   _buildAppender(levelKey) {
-    let {dir, filenamePrefix, localLogLevel } = this.options
+    let {dir, filenamePrefix, localLogLevel, consoleLogLevel } = this.options
     let name = filenamePrefix + levelKey
     let level = Reporter.LEVELS[levelKey]
     let appender = {
       type: 'clustered',
-      appenders: [
-        {
-          type: 'console'
-        }
-      ],
+      appenders: [],
       category: name
     }
 
-    // 如果当前上报级别大于等于localLogLevel
+    // 如果当前上报级别大于等于设置的控制台log级别
+    if (level >= consoleLogLevel) {
+      appender.appenders.push({
+        type: 'console'
+      })
+    }
+
+    // 如果当前上报级别大于等于设置的本地文件log级别
     if (level >= localLogLevel) {
       appender.appenders.push({
         type: 'dateFile',
