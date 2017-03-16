@@ -35,7 +35,11 @@
     // 日志文件命名的前缀 默认为空
     filenamePrefix: '',
     // 上报时需要ping的域名集合, 默认为空
-    hosts: []
+    hosts: [],
+    // 本地历史记录保持时间, 默认清除7天前的
+    historyKeepDays: 7,
+    // 临时文件保持时间, 默认清除3天前的
+    tempKeepDays: 3
   })
 
   let params = {

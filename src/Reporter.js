@@ -10,7 +10,7 @@ import crypto from 'crypto'
 import fs from 'fs-extra-promise'
 import _ from 'lodash'
 import log4js from 'log4js'
-// import moment from 'moment'
+import moment from 'moment'
 import Queue from './ReportQueue'
 
 // 一些辅助方法
@@ -100,7 +100,7 @@ const reportHelper = {
       enc += cipher.final('base64')
       return enc
     } catch (e) {
-      console.log('reporter encrypt error::', e)
+      console.error('reporter encrypt error::', e)
       return text
     }
   },
@@ -157,7 +157,11 @@ class Reporter {
     // 文件命名的前缀
     filenamePrefix: '',
     // 上报时需要ping的域名集合
-    hosts: []
+    hosts: [],
+    // 本地历史记录保持时间
+    historyKeepDays: 7,
+    // 临时文件保持时间
+    tempKeepDays: 3
   }
 
   constructor(options) {
@@ -170,6 +174,7 @@ class Reporter {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir)
     }
+
     /**
      * 处理上报行为的queue
      * @type {ReportQueue}
@@ -209,11 +214,52 @@ class Reporter {
      * @type {*}
      */
     this.timer = setInterval(this.forceProcess.bind(this), this.options.interval)
+
+    // 清除太过久远的日志文件
+    this.clearHistoryFiles()
   }
 
-  // 每种日志类型创建一个文件, 创建一个logger实例
+  /**
+   * 根据文件名获取文件路径
+   * @param name
+   * @returns {string|*}
+   * @private
+   */
+  _getFilePathByName(name) {
+    let { dir } = this.options
+    return path.join(dir, name)
+  }
+
+  /**
+   * 清除太过久远的文件
+   * @returns {Promise.<void>}
+   */
+  async clearHistoryFiles() {
+    try {
+      let { historyKeepDays, tempKeepDays } = this.options
+      let _clearCb = (file) => {
+        fs.unlinkSync(this._getFilePathByName(file.filename))
+      }
+      // 清除普通文件
+      let files = await this.getRecentFiles(historyKeepDays, false)
+      files.historyFiles.forEach(_clearCb)
+
+      // 清除临时文件
+      let temp = await this.getRecentFiles(tempKeepDays, true)
+      temp.historyFiles.forEach(_clearCb)
+    } catch(e) {
+      this._reportSelfError(e)
+    }
+  }
+
+  /**
+   * 每种日志类型创建一个文件, 创建一个logger实例
+   * @param levelKey
+   * @returns {{type: string, appenders: Array, category: string}}
+   * @private
+   */
   _buildAppender(levelKey) {
-    let {dir, filenamePrefix, localLogLevel, consoleLogLevel } = this.options
+    let {filenamePrefix, localLogLevel, consoleLogLevel } = this.options
     let name = filenamePrefix + levelKey
     let level = Reporter.LEVELS[levelKey]
     let appender = {
@@ -235,7 +281,7 @@ class Reporter {
         type: 'dateFile',
         absolute: true,
         pattern: '-yyyy-MM-dd',
-        filename: path.join(dir, name + '.log'),
+        filename: this._getFilePathByName(name + '.log'),
         backups: 10,
         maxLogSize: 1024 * 1024 * 5,
         alwaysIncludePattern: true,
@@ -249,19 +295,28 @@ class Reporter {
     return appender
   }
 
+  /**
+   * 获取设备名称
+   * @returns {string|string}
+   */
   getDeviceName() {
     return this.options.deviceName || 'unknown'
   }
 
+  /**
+   * 获取客户端版本号
+   * @returns {string|string}
+   */
   getVersion() {
     return this.options.version || 'unknown'
   }
 
-  getAD() {
-    return this.options.ad || 'unknown'
-  }
-
-  // 得到上报的基础参数
+  /**
+   * 得到上报的基础参数
+   * @param level
+   * @returns {Promise.<{device: (*|string), ip: *, time: (*|number), network: (*|Promise), log_level: *, version: (string|string), dev_n: (string|string), sys_ver: *, ping: (*|Promise.<{}>)}>}
+   * @private
+   */
   async _buildBaseData(level) {
     return {
       device: reportHelper.getPlatform(),
@@ -272,12 +327,18 @@ class Reporter {
       version: this.getVersion(),
       dev_n: this.getDeviceName(),
       sys_ver: reportHelper.getSystemVersion(),
-      ad: this.getAD(),
       ping: await reportHelper.getPingStatus(this.options.hosts)
     }
   }
 
-  // 得到需要上报的数据
+  /**
+   * 得到需要上报的数据
+   * @param eventName
+   * @param params
+   * @param level
+   * @returns {Promise.<void>}
+   * @private
+   */
   async _buildData(eventName, params = {}, level) {
     let baseData = await this._buildBaseData(level)
     return JSON.stringify({
@@ -292,13 +353,12 @@ class Reporter {
    * @returns {{level: *, levelKey: string, filePath}}
    * @private
    */
-  _getCurrentFile(level) {
-    let {dir} = this.options
+  _getCurrentTemp(level) {
     let levelKey = Reporter.getLevelKey(level)
-    let filename = levelKey + '.log'
-    let filePath = path.join(dir, filename)
+    let filename = levelKey + '.temp-' + moment().format('YYYY-MM-DD')
+    let filePath = this._getFilePathByName(filename)
     if (!fs.existsSync(filePath)) {
-      fs.openSync(filePath, 'w');
+      fs.openSync(filePath, 'w')
     }
     return {
       level,
@@ -318,7 +378,7 @@ class Reporter {
   async log(eventName, data, level = Reporter.LEVELS.INFO) {
     const record = await this._buildData(eventName, data, level)
     // 这个手动创建的文件是为了上报用(上报完就删除上报过的数据), 不存在就创建一个
-    let {filePath} = this._getCurrentFile(level)
+    let {filePath} = this._getCurrentTemp(level)
 
     // 手动写入日志
     fs.appendFile(filePath, record + reportHelper.endOfLine())
@@ -361,37 +421,77 @@ class Reporter {
   /**
    * 获取最近N天的日志文件
    * @param num
-   * @returns {Promise.<void>}
+   * @param isTemp
+   * @param level
+   * @returns {Promise.<void>}fgetRecentFiles
    */
-  // async getRecentFiles(num = 7) {
-  // 	const { dir } = this.options
-  // 	const files = await fs.readdirAsync(dir)
-  // 	const regex = new RegExp('^.*\.log\d{4}-\d{2}-\d{2}$')
-  // 	let now = moment()
-  // 	return files.filter(filename => {
-  // 	  if (regex.test(filename)) {
-  // 	    let execResult = /\d{4}-\d{2}-\d{2}/.exec(filename)
-  //      execResult = execResult ? execResult[0] : null
-  //      let diff = moment(execResult, 'YYYY-MM-DD').diff(now, 'days')
-  //      return diff > -num //判断不要改成diff<-num, 存在NaN情况也应删除
-  //    }
-  // 		return false
-  // 	})
-  // }
+  async getRecentFiles(num, isTemp, level) {
+    let levelKey = level ? Reporter.getLevelKey(level) : '.*'
+    let tail = isTemp ? 'temp-' : 'log-'
+    let dateRegex = /\d{4}-\d{2}-\d{2}/
+    let datePattern = dateRegex.toString().replace(/\//g, '')
+    let regStr = `^${levelKey}\.${tail}${datePattern}$`
+  	const { dir } = this.options
+  	const regex = new RegExp(regStr)
+  	let now = moment()
+    let _mapCb = (filename) => {
+      return {
+        filename,
+        filePath: this._getFilePathByName(filename)
+      }
+    }
+    let files = await fs.readdirAsync(dir)
+
+    // 先把不相关的文件过滤掉, 这里不能去掉, 否则就得不到正确的结果
+    files = files.filter(filename => {
+      return regex.test(filename)
+    })
+
+    // 过滤出最近N天的文件
+  	let recentFiles = files.filter(filename => {
+      let execResult = dateRegex.exec(filename)
+      execResult = execResult ? execResult[0] : null
+      let diff = moment(execResult, 'YYYY-MM-DD').diff(now, 'days')
+      return diff > -num //判断不要改成diff<-num, 存在NaN情况也应删除
+  	})
+
+    let historyFiles = files.filter(name => {
+      return recentFiles.indexOf(name) < 0
+    })
+
+    recentFiles = recentFiles.map(_mapCb)
+    historyFiles = historyFiles.map(_mapCb)
+
+    return {
+      recentFiles,
+      historyFiles
+    }
+  }
 
   /**
    * 根据当前日志文件 获取 日志记录/行数
    * @private
    */
   async _getCurrentFileLines(level, isUnlinkFile) {
-    const {dir, maxCount} = this.options
-    let {filePath, filename} = this._getCurrentFile(level)
+    let { filePath } = await this._getCurrentTemp(level)
+    return await this._getFileLines(filePath, isUnlinkFile)
+  }
+
+  /**
+   * 根据日志级别和历史天数 读取日志记录/行数
+   * @param filePath
+   * @param isUnlinkFile
+   * @returns {Promise.<{filePath: *, lines: Array, leftLines: Array, allLines: Array.<T>}>}
+   * @private
+   */
+  async _getFileLines(filePath, isUnlinkFile) {
+    const { maxCount } = this.options
     const separatorRegex = /\r?\n/g
 
     let lines = []
     let leftLines = []
 
-    let content = await fs.readFileAsync(path.join(dir, filename), 'utf8')
+    let content = await fs.readFileAsync(filePath, 'utf8')
     let curLines = content.split(separatorRegex)
 
     // 如果指明了要删除文件
@@ -408,9 +508,6 @@ class Reporter {
     }
 
     return {
-      level,
-      maxCount,
-      filename,
       filePath,
       lines,
       leftLines,
@@ -423,8 +520,9 @@ class Reporter {
    * @returns {Promise.<string>}
    * @private
    */
-  async _packageData(level) {
-    const linesInfo = await this._getCurrentFileLines(level, true)
+  async _packageData(file) {
+    const { filePath } = file
+    const linesInfo = await this._getFileLines(filePath, true)
 
     let data = []
     let lines = linesInfo.lines
@@ -492,20 +590,39 @@ class Reporter {
    * @private
    */
   async _push2LogQueue(level) {
-    let {data, linesInfo} = await this._packageData(level)
-    if (!data) {
-      return
-    }
-    this.logQueue.pushReport(data, Reporter.responseValidator).then(rs => {
-      // 上报完成后
-      // 如果有余下的数据没上报完, 再手动把没报的数据回写进去
-      console.log('job success::: try clear data')
-      this._recoverData(linesInfo.leftLines, linesInfo.filePath)
-    }).catch(error => {
-      console.log('job fail::: try recover data')
-      // 上报失败再把所有数据回写入当前日志文件
-      this._recoverData(linesInfo.allLines, linesInfo.filePath)
+    let { tempKeepDays } = this.options
+    let { recentFiles } = await this.getRecentFiles(tempKeepDays, true, level)
+
+    recentFiles.forEach(file => {
+      this._push2LogQueueSingle(file)
     })
+  }
+
+  /**
+   * 单个文件的读取上报
+   * @param file
+   * @returns {Promise.<void>}
+   * @private
+   */
+  async _push2LogQueueSingle(file) {
+    try {
+      let {data, linesInfo} = await this._packageData(file)
+      if (!data) {
+        return
+      }
+      this.logQueue.pushReport(data, Reporter.responseValidator).then(rs => {
+        // 上报完成后
+        // 如果有余下的数据没上报完, 再手动把没报的数据回写进去
+        console.log('job success::: try clear data')
+        this._recoverData(linesInfo.leftLines, linesInfo.filePath)
+      }).catch(error => {
+        console.log('job fail::: try recover data')
+        // 上报失败再把所有数据回写入当前日志文件
+        this._recoverData(linesInfo.allLines, linesInfo.filePath)
+      })
+    } catch(e) {
+      this._reportSelfError(e)
+    }
   }
 
   /**
@@ -521,7 +638,7 @@ class Reporter {
         if (status === 0) {
           return true
         }
-        console.log('report::: status is not 0')
+        console.error('report::: status is not 0')
         return false
       } catch (e) {
         return false
@@ -574,6 +691,15 @@ class Reporter {
         }
       )
     })
+  }
+
+  /**
+   * 上报本身出现异常
+   * @param error
+   * @private
+   */
+  _reportSelfError(error) {
+    console.error(error)
   }
 
   /**

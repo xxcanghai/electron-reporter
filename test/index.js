@@ -4,7 +4,8 @@ let logger = new Reporter({
   url: '',
   dir: process.cwd() + '/logs',
   interval: 5000,
-  localLogLevel: 3
+  localLogLevel: 0,
+  consoleLogLevel: 0
 })
 
 logger.debug('Got cheese.');
