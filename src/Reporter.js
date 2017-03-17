@@ -6,17 +6,29 @@ import os from 'os'
 import ping from 'ping'
 import request from 'request'
 import path from 'path'
-import crypto from 'crypto'
+
 import fs from 'fs-extra-promise'
 import _ from 'lodash'
 import log4js from 'log4js'
 import moment from 'moment'
+import unzip from './cross-unzip'
+import FILE from './file'
 import Queue from './ReportQueue'
 
 // 一些辅助方法
 const reportHelper = {
   endOfLine() {
     return os.EOL || '\n'
+  },
+  t2p(thunk, ...args) {
+    return new Promise((resolve, reject) => {
+      thunk(...args, (err, ...rest) => {
+        if (err) reject(err)
+        else {
+          resolve(rest.length > 1 ? rest : rest[0])
+        }
+      })
+    })
   },
   /**
    * 获取当前设备所属平台
@@ -83,27 +95,7 @@ const reportHelper = {
       return acc
     }, pObject)
     return pObject
-  },
-  /**
-   * 上报前加密日志
-   * @param text
-   * @returns {*}
-   */
-  encrypt(text){
-    const key = '78afc8512559b62f'
-    const iv = '78afc8512559b62f'
-    const clearEncoding = 'utf8'
-    const algorithm = 'aes-128-cbc'
-    try {
-      const cipher = crypto.createCipheriv(algorithm, key, iv)
-      let enc = cipher.update(text, clearEncoding, 'base64')
-      enc += cipher.final('base64')
-      return enc
-    } catch (e) {
-      console.error('reporter encrypt error::', e)
-      return text
-    }
-  },
+  }
 }
 
 class Reporter {
@@ -135,6 +127,8 @@ class Reporter {
   static defaultOptions = {
     // 上报地址
     url: '',
+    // 日志文件上传地址
+    uploadUrl: '',
     // 设备名字
     deviceName: '',
     // 客户端版本号
@@ -161,7 +155,14 @@ class Reporter {
     // 本地历史记录保持时间
     historyKeepDays: 7,
     // 临时文件保持时间
-    tempKeepDays: 3
+    tempKeepDays: 3,
+    // 加密配置
+    encryptOptions: {
+      key: '78afc8512559b62f',
+      iv: '78afc8512559b62f',
+      clearEncoding: 'utf8',
+      algorithm: 'aes-128-cbc'
+    }
   }
 
   constructor(options) {
@@ -170,7 +171,9 @@ class Reporter {
      * @type {{url: string, deviceName: string, version: string, dir: string, level: string, interval: number, threshold: number, filenamePrefix: string, hosts: array}}
      */
     this.options = Object.assign({}, Reporter.defaultOptions, options)
-    const { dir } = this.options
+
+    // 如果指明的目录不存在 要先创建
+    const {dir} = this.options
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir)
     }
@@ -181,6 +184,14 @@ class Reporter {
      */
     this.logQueue = new Queue({
       processFunction: this.report.bind(this)
+    })
+
+    /**
+     * 处理上传的queue
+     * @type {ReportQueue}
+     */
+    this.uploadQueue = new Queue({
+      processFunction: this.upload.bind(this)
     })
 
     /**
@@ -226,7 +237,7 @@ class Reporter {
    * @private
    */
   _getFilePathByName(name) {
-    let { dir } = this.options
+    let {dir} = this.options
     return path.join(dir, name)
   }
 
@@ -236,7 +247,7 @@ class Reporter {
    */
   async clearHistoryFiles() {
     try {
-      let { historyKeepDays, tempKeepDays } = this.options
+      let {historyKeepDays, tempKeepDays} = this.options
       let _clearCb = (file) => {
         fs.unlinkSync(this._getFilePathByName(file.filename))
       }
@@ -247,8 +258,8 @@ class Reporter {
       // 清除临时文件
       let temp = await this.getRecentFiles(tempKeepDays, true)
       temp.historyFiles.forEach(_clearCb)
-    } catch(e) {
-      this._reportSelfError(e)
+    } catch (e) {
+      this._reportSelfError('clearHistoryFiles failed')
     }
   }
 
@@ -259,7 +270,7 @@ class Reporter {
    * @private
    */
   _buildAppender(levelKey) {
-    let {filenamePrefix, localLogLevel, consoleLogLevel } = this.options
+    let {filenamePrefix, localLogLevel, consoleLogLevel} = this.options
     let name = filenamePrefix + levelKey
     let level = Reporter.LEVELS[levelKey]
     let appender = {
@@ -431,9 +442,9 @@ class Reporter {
     let dateRegex = /\d{4}-\d{2}-\d{2}/
     let datePattern = dateRegex.toString().replace(/\//g, '')
     let regStr = `^${levelKey}\.${tail}${datePattern}$`
-  	const { dir } = this.options
-  	const regex = new RegExp(regStr)
-  	let now = moment()
+    const {dir} = this.options
+    const regex = new RegExp(regStr)
+    let now = moment()
     let _mapCb = (filename) => {
       return {
         filename,
@@ -448,12 +459,12 @@ class Reporter {
     })
 
     // 过滤出最近N天的文件
-  	let recentFiles = files.filter(filename => {
+    let recentFiles = files.filter(filename => {
       let execResult = dateRegex.exec(filename)
       execResult = execResult ? execResult[0] : null
       let diff = moment(execResult, 'YYYY-MM-DD').diff(now, 'days')
       return diff > -num //判断不要改成diff<-num, 存在NaN情况也应删除
-  	})
+    })
 
     let historyFiles = files.filter(name => {
       return recentFiles.indexOf(name) < 0
@@ -473,7 +484,7 @@ class Reporter {
    * @private
    */
   async _getCurrentFileLines(level, isUnlinkFile) {
-    let { filePath } = await this._getCurrentTemp(level)
+    let {filePath} = await this._getCurrentTemp(level)
     return await this._getFileLines(filePath, isUnlinkFile)
   }
 
@@ -485,7 +496,7 @@ class Reporter {
    * @private
    */
   async _getFileLines(filePath, isUnlinkFile) {
-    const { maxCount } = this.options
+    const {maxCount} = this.options
     const separatorRegex = /\r?\n/g
 
     let lines = []
@@ -493,6 +504,11 @@ class Reporter {
 
     let content = await fs.readFileAsync(filePath, 'utf8')
     let curLines = content.split(separatorRegex)
+
+    // todo 为什么这么多空行?
+    curLines = curLines.filter(line => {
+      return line.trim()
+    })
 
     // 如果指明了要删除文件
     if (isUnlinkFile) {
@@ -521,23 +537,19 @@ class Reporter {
    * @private
    */
   async _packageData(file) {
-    const { filePath } = file
+    const {encryptOptions} = this.options
+    const {filePath} = file
     const linesInfo = await this._getFileLines(filePath, true)
 
     let data = []
-    let lines = linesInfo.lines
+    let lines = linesInfo.allLines
 
     lines.reduce((acc, line) => {
-      // 移除空字符
-      line = line.trim()
-      // 去除头部提示信息, 得到真正的json数据
-      if (line.split('=>').length > 1) {
-        line = line.split('=>')[1]
-      }
       try {
         acc.push(JSON.parse(line))
       } catch (e) {
-        //
+        // this._reportSelfError(e)
+        console.error('json parse line failed', line)
       }
       return acc
     }, data)
@@ -552,7 +564,7 @@ class Reporter {
     })
 
     //todo ...这里为了兼容ios端的特殊格式的处理, 之后加个afterParsedData的hook来传参处理吧
-    const encData = reportHelper.encrypt(JSON.stringify(filteredData))
+    const encData = FILE.encrypt(JSON.stringify(filteredData), encryptOptions)
     const finalData = '=' + encodeURIComponent(encData)
 
     return {
@@ -571,15 +583,37 @@ class Reporter {
   async process(isForce) {
     // 达到阈值 或者 指明强制上报
     if (isForce) {
-      const {level} = this.options
+      const {level, tempKeepDays} = this.options
       // 得到真正允许上报的级别
       const filterdLevels = Object.keys(Reporter.LEVELS).filter(key => {
         return Reporter.LEVELS[key] >= level
       })
 
-      filterdLevels.forEach(curKey => {
-        this._push2LogQueue(Reporter.LEVELS[curKey])
+      // 待上传的文件列表
+      let files2Report = []
+
+      let filesPromise = filterdLevels.map(curKey => {
+        return this.getRecentFiles(tempKeepDays, true, Reporter.LEVELS[curKey])
       })
+
+      let files = await Promise.all(filesPromise)
+      files.forEach(file => {
+        files2Report = files2Report.concat(file.recentFiles)
+      })
+
+      // 只有一个文件
+      if (files2Report.length === 1) {
+        let file = files2Report[0]
+        // 文件大小 小于50k 走字符串上报流程
+        let {size} = fs.statSync(file.filePath)
+        if (size < 1024 * 50) {
+          return this._push2LogQueue(file)
+        } else { // 否则走文件上传流程
+          return this._push2UploadQueue(files2Report)
+        }
+      } else if (files2Report.length > 1) { // 多文件直接走文件上传流程
+        return this._push2UploadQueue(files2Report)
+      }
     }
   }
 
@@ -589,13 +623,76 @@ class Reporter {
    * @returns {Promise.<void>}
    * @private
    */
-  async _push2LogQueue(level) {
-    let { tempKeepDays } = this.options
-    let { recentFiles } = await this.getRecentFiles(tempKeepDays, true, level)
+  async _push2UploadQueue(files) {
+    const {encryptOptions} = this.options
+    let packageBaseName = 'package'
+    let packageExt = '.zip'
+    let packageName = packageBaseName + packageExt
+    let packageDir = this._getFilePathByName(packageBaseName)
+    let packagePath = this._getFilePathByName(packageName)
+    let encryptPath = packageDir + packageBaseName + '.encrypt' + packageExt
 
-    recentFiles.forEach(file => {
-      this._push2LogQueueSingle(file)
+    let movePromise = []
+    // 创建待压缩目录
+    if (!fs.existsSync(packageDir)) {
+      fs.mkdirSync(packageDir)
+    }
+
+    // 全部移到待压缩目录
+    files.forEach(file => {
+      let newPath = path.join(packageDir, file.filename)
+      movePromise.push(fs.renameAsync(file.filePath, newPath))
     })
+
+    await Promise.all(movePromise)
+
+    // 压缩成zip
+    try {
+      await reportHelper.t2p(unzip.zip, packagePath, packageDir)
+
+      // 等待加密完成
+      await FILE.encryptFile({
+        filename: packageName,
+        filePath: packagePath
+      }, encryptOptions, encryptPath)
+
+      // 删除zip及加密后文件
+      let _clearZip = () => {
+        fs.unlink(packagePath)
+        fs.unlink(encryptPath)
+      }
+
+      // 塞入队列
+      this.uploadQueue.pushReport(encryptPath, Reporter.responseValidator).then(rs => {
+        if (rs) {
+          // 删除待压缩的目录
+          this._removePackageDir(packageDir)
+          console.log('upload job: success')
+        } else {
+          throw new Error('上传队列执行失败')
+        }
+        // 删除待压缩的目录
+        _clearZip()
+      })
+    } catch (e) {
+      this._reportSelfError('塞入上传队列过程中出错')
+    }
+  }
+
+  /**
+   * 清除待打包目录
+   * @param packageDir
+   * @returns {Promise.<void>}
+   * @private
+   */
+  async _removePackageDir(packageDir) {
+    let _toRemoveFiles = await fs.readdirAsync(packageDir)
+    let _toRemovePromise = []
+    _toRemoveFiles.forEach(_toRemove => {
+      let _toRemovePath = path.join(packageDir, _toRemove)
+      _toRemovePromise.push(fs.unlinkAsync(_toRemovePath))
+    })
+    await Promise.all(_toRemovePromise)
   }
 
   /**
@@ -604,7 +701,7 @@ class Reporter {
    * @returns {Promise.<void>}
    * @private
    */
-  async _push2LogQueueSingle(file) {
+  async _push2LogQueue(file) {
     try {
       let {data, linesInfo} = await this._packageData(file)
       if (!data) {
@@ -612,15 +709,15 @@ class Reporter {
       }
       this.logQueue.pushReport(data, Reporter.responseValidator).then(rs => {
         // 上报完成后
-        // 如果有余下的数据没上报完, 再手动把没报的数据回写进去
-        console.log('job success::: try clear data')
-        this._recoverData(linesInfo.leftLines, linesInfo.filePath)
-      }).catch(error => {
-        console.log('job fail::: try recover data')
-        // 上报失败再把所有数据回写入当前日志文件
-        this._recoverData(linesInfo.allLines, linesInfo.filePath)
+        if (rs) {
+          console.log('job success::: try clear data')
+        } else {
+          console.log('job fail::: try recover data')
+          // 上报失败再把所有数据回写入当前日志文件
+          this._recoverData(linesInfo.allLines, linesInfo.filePath)
+        }
       })
-    } catch(e) {
+    } catch (e) {
       this._reportSelfError(e)
     }
   }
@@ -641,6 +738,7 @@ class Reporter {
         console.error('report::: status is not 0')
         return false
       } catch (e) {
+        console.error('responseValidator parse body failed')
         return false
       }
     }
@@ -649,9 +747,20 @@ class Reporter {
 
   /**
    * 上报日志
+   * @param data
+   * @returns {Promise}
    */
   report(data) {
-    return this._report2Remote(data, this.options.serverUrl)
+    return this._report2Remote(data, this.options.url)
+  }
+
+  /**
+   * 上传日志
+   * @param filePath
+   * @returns {Promise.<void>}
+   */
+  upload(filePath) {
+    return this._upload2Remote(filePath, this.options.uploadUrl)
   }
 
   /**
@@ -661,11 +770,16 @@ class Reporter {
    * @private
    */
   _recoverData(lines, filepath) {
-    if (lines && lines.length) {
-      lines.forEach(line => {
-        const record = JSON.stringify(line) + reportHelper.endOfLine()
-        fs.appendFile(filepath, record)
-      })
+    try {
+      if (lines && lines.length) {
+        let records = ''
+        lines.forEach(line => {
+          records += line + reportHelper.endOfLine()
+        })
+        fs.appendFile(filepath, records)
+      }
+    } catch (e) {
+      console.error(e)
     }
   }
 
@@ -685,7 +799,7 @@ class Reporter {
     }
 
     return new Promise((resolve, reject) => {
-      request({method: 'POST', uri, body, headers}, function (error, response) {
+      request({method: 'POST', uri, body, headers, timeout: 5000}, function (error, response) {
           if (error) reject(error)
           resolve(response)
         }
@@ -694,11 +808,39 @@ class Reporter {
   }
 
   /**
+   * 上传日志文件到远程服务器
+   * @param filePath
+   * @param url
+   * @returns {Promise.<void>}
+   * @private
+   */
+  async _upload2Remote(filePath, url) {
+    let md5 = await FILE.getMd5File(filePath)
+    let params = {
+      a: md5.toString('base64')
+    }
+    try {
+      let response = await reportHelper.t2p(FILE.uploadFile, {
+        url,
+        params,
+        filePath
+      })
+      // console.log('response', response)
+      return response
+    } catch (e) {
+      this._reportSelfError('_upload2Remote failed')
+    }
+  }
+
+  /**
    * 上报本身出现异常
    * @param error
    * @private
    */
   _reportSelfError(error) {
+    if (error && error.statusMessage) {
+      return console.error(error.statusMessage)
+    }
     console.error(error)
   }
 

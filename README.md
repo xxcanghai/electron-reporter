@@ -6,6 +6,8 @@
   * 根据上报类型分隔日志文件
   * 自动根据日期和文件大小分割日志文件
   * 排队上报到远程服务器, 失败自动重试, 保留所有原始日志
+  * 自动把最近N天的日志文件打成加密压缩包并上传
+  * 自动清理久远的历史日志
 
 #### usage
 > npm install electron-reporter
@@ -15,6 +17,8 @@
   let logger = new Reporter({
     // 上报server地址 必须
     url: 'xxx',
+    // 日志文件上传地址
+    uploadUrl: '',
     // 设备名字
     deviceName: '',
     // 客户端版本号
@@ -39,7 +43,14 @@
     // 本地历史记录保持时间, 默认清除7天前的
     historyKeepDays: 7,
     // 临时文件保持时间, 默认清除3天前的
-    tempKeepDays: 3
+    tempKeepDays: 3,
+    // 加密配置
+    encryptOptions: {
+      key: '',
+      iv: '',
+      clearEncoding: 'utf8',
+      algorithm: 'aes-128-cbc'
+    }
   })
 
   let params = {

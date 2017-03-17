@@ -1,6 +1,6 @@
 {
   "name": "electron-reporter",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "A project for report log in electron or nw",
   "repository": "4f2e/electron-reporter",
   "author": "xingyuzhe <yuzhe.xing@qq.com>",
@@ -94,13 +94,16 @@
   "dependencies": {
     "babel-polyfill": "^6.23.0",
     "d3-queue": "^3.0.4",
+    "form-data": "^2.1.2",
     "fs-extra-promise": "^0.4.1",
     "ip": "^1.1.5",
     "lodash": "^4.17.4",
     "log4js": "^1.1.1",
+    "md5-file": "^3.1.1",
     "moment": "^2.17.1",
     "network": "^0.3.2",
     "ping": "^0.2.2",
-    "request": "^2.80.0"
+    "request": "^2.80.0",
+    "win-7zip": "^0.1.0"
   }
 }

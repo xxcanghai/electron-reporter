@@ -2,6 +2,7 @@ import Reporter from '../src'
 
 let logger = new Reporter({
   url: '',
+  uploadUrl: '',
   dir: process.cwd() + '/logs',
   interval: 5000,
   localLogLevel: 0,
