@@ -838,9 +838,6 @@ class Reporter {
    * @private
    */
   _reportSelfError(error) {
-    if (error && error.statusMessage) {
-      return console.error(error.statusMessage)
-    }
     console.error(error)
   }
 
