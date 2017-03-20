@@ -63,4 +63,13 @@
   logger.info('Cheese is Gouda.', params);
   logger.warn('Cheese is quite smelly.', params);
   logger.error('Cheese is too ripe!', params);
+
+setTimeout(() => {
+  // 重设配置选项
+  logger.configure({
+    level: 0
+  })
+  // 强制立即上报
+  logger.forceProcess()
+}, 6000)
 ```

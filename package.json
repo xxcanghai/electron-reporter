@@ -1,6 +1,6 @@
 {
   "name": "electron-reporter",
-  "version": "0.0.11",
+  "version": "0.1.0",
   "description": "A project for report log in electron or nw",
   "repository": "4f2e/electron-reporter",
   "author": "xingyuzhe <yuzhe.xing@qq.com>",
@@ -93,6 +93,7 @@
   },
   "dependencies": {
     "babel-polyfill": "^6.23.0",
+    "cross-unzip": "^0.2.1",
     "d3-queue": "^3.0.4",
     "form-data": "^2.1.2",
     "fs-extra-promise": "^0.4.1",

@@ -1,6 +1,7 @@
 import 'babel-polyfill'
 import crypto from 'crypto'
 import fs from 'fs'
+import path from 'path'
 import md5File from 'md5-file'
 import FormData from 'form-data'
 
@@ -22,6 +23,30 @@ export default {
         resolve(hash)
       })
     })
+  },
+  /**
+   * 应对文件重名的情况
+   * @param savePath
+   * @returns {{saveName: *, savePath: *}}
+   */
+  fixRepeatFileName(savePath) {
+    let saveName = path.basename(savePath)
+    saveName = saveName.replace(/[\\\/:\*\,"\?<>|]/g, '_')
+    let ext = path.extname(saveName)
+    let base = path.basename(saveName, ext)
+    let baseDir = path.dirname(savePath)
+    if (fs.existsSync(savePath)) {
+      let i = 1;
+      while (fs.existsSync(baseDir + '/' + base + "(" + i + ")" + ext)) {
+        i++;
+      }
+      savePath = baseDir + '/' + base + "(" + i + ")" + ext;
+      saveName = base + "(" + i + ")" + ext;
+    }
+    return {
+      saveName,
+      savePath
+    }
   },
   /**
    * 根据配置加密字符串

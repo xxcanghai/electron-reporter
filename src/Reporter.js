@@ -11,7 +11,7 @@ import fs from 'fs-extra-promise'
 import _ from 'lodash'
 import log4js from 'log4js'
 import moment from 'moment'
-import unzip from './cross-unzip'
+import unzip from 'cross-unzip'
 import FILE from './file'
 import Queue from './ReportQueue'
 
@@ -220,14 +220,58 @@ class Reporter {
         }
       })
     })
-    /**
-     * 定时上报的timer
-     * @type {*}
-     */
-    this.timer = setInterval(this.forceProcess.bind(this), this.options.interval)
 
+    this._addReportTimer()
+    this._addClearTimer()
     // 清除太过久远的日志文件
     this.clearHistoryFiles()
+  }
+
+  /**
+   * 重新设置配置选项
+   * @param op
+   */
+  configure(op) {
+    if (!op) {
+      return
+    }
+    let options = Object.assign({}, op)
+    if (options.localLogLevel) {
+      delete options.localLogLevel
+      console.warn('configure localLogLevel is not supported')
+    }
+    if (options.consoleLogLevel) {
+      delete options.consoleLogLevel
+      console.warn('configure consoleLogLevel is not supported')
+    }
+    let { interval } = this.options
+    this.options = Object.assign(this.options, options)
+    if (this.options.interval && interval !== this.options.interval) {
+      this._addReportTimer()
+    }
+  }
+
+  /**
+   * 定时上报的timer
+   * @private
+   */
+  _addReportTimer() {
+    if (this.reportTimer) {
+      clearInterval(this.reportTimer)
+    }
+    this.reportTimer = setInterval(this.forceProcess.bind(this), this.options.interval)
+  }
+
+  /**
+   * 定时清理的timer
+   * @private
+   */
+  _addClearTimer() {
+    let interval = 1000 * 60 * 60 * 24 * 3 // 每隔3天定时清理
+    if (this.clearTimer) {
+      clearInterval(this.clearTimer)
+    }
+    this.clearTimer = setInterval(this.clearHistoryFiles.bind(this), interval)
   }
 
   /**
@@ -258,6 +302,8 @@ class Reporter {
       // 清除临时文件
       let temp = await this.getRecentFiles(tempKeepDays, true)
       temp.historyFiles.forEach(_clearCb)
+
+      // todo 还没有清理package目录下备份的日志文件
     } catch (e) {
       this._reportSelfError('clearHistoryFiles failed')
     }
@@ -641,6 +687,8 @@ class Reporter {
     // 全部移到待压缩目录
     files.forEach(file => {
       let newPath = path.join(packageDir, file.filename)
+      // 修正文件路径 预防直接覆盖导致日志丢失
+      newPath = FILE.fixRepeatFileName(newPath).savePath
       movePromise.push(fs.renameAsync(file.filePath, newPath))
     })
 
@@ -648,7 +696,7 @@ class Reporter {
 
     // 压缩成zip
     try {
-      await reportHelper.t2p(unzip.zip, packagePath, packageDir)
+      await reportHelper.t2p(unzip.zip, packageDir, packagePath)
 
       // 等待加密完成
       await FILE.encryptFile({
@@ -658,12 +706,18 @@ class Reporter {
 
       // 删除zip及加密后文件
       let _clearZip = () => {
-        fs.unlink(packagePath)
-        fs.unlink(encryptPath)
+        if (fs.existsSync(packagePath)) {
+          fs.unlink(packagePath)
+        }
+        if (fs.existsSync(encryptPath)) {
+          fs.unlink(encryptPath)
+        }
       }
 
       // 塞入队列
       this.uploadQueue.pushReport(encryptPath, Reporter.responseValidator).then(rs => {
+        // 删除待压缩的目录
+        _clearZip()
         if (rs) {
           // 删除待压缩的目录
           this._removePackageDir(packageDir)
@@ -671,11 +725,9 @@ class Reporter {
         } else {
           throw new Error('上传队列执行失败')
         }
-        // 删除待压缩的目录
-        _clearZip()
       })
     } catch (e) {
-      this._reportSelfError('塞入上传队列过程中出错')
+      this._reportSelfError('塞入上传队列过程中出错', e)
     }
   }
 
@@ -834,18 +886,19 @@ class Reporter {
 
   /**
    * 上报本身出现异常
-   * @param error
+   * @param args
    * @private
    */
-  _reportSelfError(error) {
-    console.error(error)
+  _reportSelfError(...args) {
+    console.error(...args)
   }
 
   /**
    * 销毁, 清除定时器, 解绑等
    */
   destroy() {
-    clearInterval(this.timer)
+    clearInterval(this.reportTimer)
+    clearInterval(this.clearTimer)
   }
 }
 
