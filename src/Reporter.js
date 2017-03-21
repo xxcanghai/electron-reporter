@@ -676,7 +676,7 @@ class Reporter {
     let packageName = packageBaseName + packageExt
     let packageDir = this._getFilePathByName(packageBaseName)
     let packagePath = this._getFilePathByName(packageName)
-    let encryptPath = packageDir + packageBaseName + '.encrypt' + packageExt
+    let encryptPath = this._getFilePathByName(packageBaseName + '.encrypt' + packageExt)
 
     let movePromise = []
     // 创建待压缩目录
@@ -868,8 +868,10 @@ class Reporter {
    */
   async _upload2Remote(filePath, url) {
     let md5 = await FILE.getMd5File(filePath)
+    let { encryptOptions } = this.options
+    md5 = FILE.encrypt(md5, encryptOptions)
     let params = {
-      a: md5.toString('base64')
+      a: encodeURIComponent(md5.toString('base64'))
     }
     try {
       let response = await reportHelper.t2p(FILE.uploadFile, {
