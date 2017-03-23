@@ -1,8 +1,8 @@
 /** @fileOverview 给electron/nw等类似客户端用的日志上报模块 **/
 import ip from 'ip'
-import network from 'network'
+// import network from 'network'
 import os from 'os'
-import ping from 'ping'
+// import ping from 'ping'
 import request from 'request'
 import path from 'path'
 
@@ -66,36 +66,40 @@ const reportHelper = {
    * 获取当前设备的网络环境 有5种  wire|wireless|FireWire|Thunderbolt|Other
    * @returns {Promise}
    */
-  async getNetworkType() {
-    return new Promise((resolve) => {
-      network.get_active_interface((err, res) => {
-        if (res && res.type) {
-          resolve(res.type)
-        } else {
-          resolve('unknown')
-        }
-      })
-    })
-  },
+  // async getNetworkType() {
+  //   return new Promise((resolve) => {
+  //     network.get_active_interface((err, res) => {
+  //       if (res && res.type) {
+  //         resolve(res.type)
+  //       } else {
+  //         resolve('unknown')
+  //       }
+  //     })
+  //   })
+  // },
 
   /**
    * 获取指定服务器的延时数值
    * @returns {Promise.<{}>}
    */
-  async getPingStatus(hosts = []) {
-    const promises = hosts.map(async(host, idx) => {
-      const p = await ping.promise.probe(host)
-      return {host, time: p.avg}
-    })
-    const pArray = await Promise.all(promises)
-    const pObject = {}
-    _.reduce(pArray, (acc, val) => {
-      acc[val.host] = val.time
-      return acc
-    }, pObject)
-    return pObject
-  }
+  // async getPingStatus(hosts = []) {
+  //   const promises = hosts.map(async(host, idx) => {
+  //     const p = await ping.promise.probe(host)
+  //     return {host, time: p.avg}
+  //   })
+  //   const pArray = await Promise.all(promises)
+  //   const pObject = {}
+  //   _.reduce(pArray, (acc, val) => {
+  //     acc[val.host] = val.time
+  //     return acc
+  //   }, pObject)
+  //   return pObject
+  // }
 }
+
+const IP = reportHelper.getIP()
+const systemVersion = reportHelper.getSystemVersion()
+const platForm = reportHelper.getPlatform()
 
 class Reporter {
 
@@ -375,15 +379,15 @@ class Reporter {
    */
   async _buildBaseData(level) {
     return {
-      device: reportHelper.getPlatform(),
-      ip: reportHelper.getIP(),
+      device: platForm,
+      ip: IP,
       time: reportHelper.getTime(),
-      network: await reportHelper.getNetworkType(),
+      // network: await reportHelper.getNetworkType(),
       log_level: level,
       version: this.getVersion(),
       dev_n: this.getDeviceName(),
-      sys_ver: reportHelper.getSystemVersion(),
-      ping: await reportHelper.getPingStatus(this.options.hosts)
+      sys_ver: systemVersion,
+      // ping: await reportHelper.getPingStatus(this.options.hosts)
     }
   }
 
