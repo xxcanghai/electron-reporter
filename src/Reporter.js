@@ -1,8 +1,8 @@
 /** @fileOverview 给electron/nw等类似客户端用的日志上报模块 **/
 import ip from 'ip'
-// import network from 'network'
+import network from 'network'
 import os from 'os'
-// import ping from 'ping'
+import ping from 'ping'
 import request from 'request'
 import path from 'path'
 
@@ -66,35 +66,35 @@ const reportHelper = {
    * 获取当前设备的网络环境 有5种  wire|wireless|FireWire|Thunderbolt|Other
    * @returns {Promise}
    */
-  // async getNetworkType() {
-  //   return new Promise((resolve) => {
-  //     network.get_active_interface((err, res) => {
-  //       if (res && res.type) {
-  //         resolve(res.type)
-  //       } else {
-  //         resolve('unknown')
-  //       }
-  //     })
-  //   })
-  // },
+  async getNetworkType() {
+    return new Promise((resolve) => {
+      network.get_active_interface((err, res) => {
+        if (res && res.type) {
+          resolve(res.type)
+        } else {
+          resolve('unknown')
+        }
+      })
+    })
+  },
 
   /**
    * 获取指定服务器的延时数值
    * @returns {Promise.<{}>}
    */
-  // async getPingStatus(hosts = []) {
-  //   const promises = hosts.map(async(host, idx) => {
-  //     const p = await ping.promise.probe(host)
-  //     return {host, time: p.avg}
-  //   })
-  //   const pArray = await Promise.all(promises)
-  //   const pObject = {}
-  //   _.reduce(pArray, (acc, val) => {
-  //     acc[val.host] = val.time
-  //     return acc
-  //   }, pObject)
-  //   return pObject
-  // }
+  async getPingStatus(hosts = []) {
+    const promises = hosts.map(async(host, idx) => {
+      const p = await ping.promise.probe(host)
+      return {host, time: p.avg}
+    })
+    const pArray = await Promise.all(promises)
+    const pObject = {}
+    _.reduce(pArray, (acc, val) => {
+      acc[val.host] = val.time
+      return acc
+    }, pObject)
+    return pObject
+  }
 }
 
 const IP = reportHelper.getIP()
@@ -165,7 +165,11 @@ class Reporter {
       iv: '78afc8512559b62f',
       clearEncoding: 'utf8',
       algorithm: 'aes-128-cbc'
-    }
+    },
+    // ping获取的时间间隔
+    pingThrottle: 15 * 1000,
+    // network获取的时间间隔
+    networkThrottle: 15 * 1000
   }
 
   constructor(options) {
@@ -226,6 +230,7 @@ class Reporter {
 
     this._addReportTimer()
     this._addClearTimer()
+
     // 清除太过久远的日志文件
     this.clearHistoryFiles()
   }
@@ -378,16 +383,33 @@ class Reporter {
    * @private
    */
   async _buildBaseData(level) {
+    let { pingThrottle, networkThrottle } = this.options
+    let needUpdatePing = !this.ping || (this.ping && this.ping.time < (new Date().getTime() - pingThrottle))
+    let needUpdateNetwork = !this.network || (this.network && this.network.time < (new Date().getTime() - networkThrottle))
+    if (needUpdatePing) {
+      let ping = await reportHelper.getPingStatus(this.options.hosts)
+      this.ping = {
+        time: new Date().getTime(),
+        value: ping
+      }
+    }
+    if (needUpdateNetwork) {
+      let network = await reportHelper.getNetworkType()
+      this.network = {
+        time: new Date().getTime(),
+        value: network
+      }
+    }
     return {
       device: platForm,
       ip: IP,
       time: reportHelper.getTime(),
-      // network: await reportHelper.getNetworkType(),
+      network: this.network.value,
       log_level: level,
       version: this.getVersion(),
       dev_n: this.getDeviceName(),
       sys_ver: systemVersion,
-      // ping: await reportHelper.getPingStatus(this.options.hosts)
+      ping: this.ping.value
     }
   }
 
