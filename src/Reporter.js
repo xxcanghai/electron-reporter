@@ -390,17 +390,35 @@ class Reporter {
   /**
    * 得到需要上报的数据
    * @param eventName
-   * @param params
+   * @param _params
    * @param level
-   * @returns {Promise.<void>}
+   * @returns {Promise.<*>}
    * @private
    */
-  async _buildData(eventName, params = {}, level) {
+  async _buildData(eventName, _params = {}, level) {
     let baseData = await this._buildBaseData(level)
-    return JSON.stringify({
-      event: eventName,
-      data: Object.assign({}, baseData, params)
+    let str
+    let params = Object.assign({}, _params)
+    Object.keys(params).forEach(key => {
+      if (params[key] instanceof Error) {
+        params[key] = params[key].toString()
+      }
     })
+
+    try {
+      str = JSON.stringify({
+        event: eventName,
+        data: Object.assign({}, baseData, params)
+      })
+    } catch(e) {
+      str = JSON.stringify({
+        event: eventName,
+        data: Object.assign({}, baseData, {
+          error: 'try JSON.stringify failed'
+        })
+      })
+    }
+    return str
   }
 
   /**
