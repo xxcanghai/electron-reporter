@@ -1,4 +1,3 @@
-import 'babel-polyfill'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
@@ -55,7 +54,7 @@ export default {
    * @returns {*}
    */
   encrypt(text, options){
-    const { key, iv, clearEncoding, algorithm } = options
+    const {key, iv, clearEncoding, algorithm} = options
     try {
       const cipher = crypto.createCipheriv(algorithm, key, iv)
       let enc = cipher.update(text, clearEncoding, 'base64')
@@ -74,8 +73,8 @@ export default {
    * @returns {Promise}
    */
   async encryptFile(file, options, encryptPath) {
-    let { key, iv, algorithm } = options
-    let { filePath } = file
+    let {key, iv, algorithm} = options
+    let {filePath} = file
 
     // if (typeof key === 'string') {
     //   key = Buffer.from(key, 'base64')
@@ -107,7 +106,7 @@ export default {
    * @param callback
    * @returns {Promise.<void>}
    */
-  uploadFile({ url, params = {}, filePath }, callback) {
+  uploadFile({url, params = {}, filePath}, callback) {
     if (!fs.existsSync(filePath)) {
       callback(new Error('文件不存在'))
     }

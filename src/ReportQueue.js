@@ -1,4 +1,3 @@
-import 'babel-polyfill'
 import _ from 'lodash'
 import {queue} from 'd3-queue'
 

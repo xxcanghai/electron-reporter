@@ -1,5 +1,4 @@
 /** @fileOverview 给electron/nw等类似客户端用的日志上报模块 **/
-import 'babel-polyfill'
 import ip from 'ip'
 import network from 'network'
 import os from 'os'
