@@ -383,34 +383,40 @@ class Reporter {
    * @private
    */
   async _buildBaseData(level) {
-    let { pingThrottle, networkThrottle } = this.options
-    let needUpdatePing = !this.ping || (this.ping && this.ping.time < (new Date().getTime() - pingThrottle))
-    let needUpdateNetwork = !this.network || (this.network && this.network.time < (new Date().getTime() - networkThrottle))
-    if (needUpdatePing) {
-      let ping = await reportHelper.getPingStatus(this.options.hosts)
-      this.ping = {
-        time: new Date().getTime(),
-        value: ping
-      }
-    }
-    if (needUpdateNetwork) {
-      let network = await reportHelper.getNetworkType()
-      this.network = {
-        time: new Date().getTime(),
-        value: network
-      }
-    }
-    return {
+    let data = {
       device: platForm,
       ip: IP,
       time: reportHelper.getTime(),
-      network: this.network.value,
       log_level: level,
       version: this.getVersion(),
       dev_n: this.getDeviceName(),
       sys_ver: systemVersion,
-      ping: this.ping.value
     }
+    // 只在windows下调用network和ping, mac下有几率导致nw崩溃
+    if (platForm === 'win') {
+      let { pingThrottle, networkThrottle } = this.options
+      let needUpdatePing = !this.ping || (this.ping && this.ping.time < (new Date().getTime() - pingThrottle))
+      let needUpdateNetwork = !this.network || (this.network && this.network.time < (new Date().getTime() - networkThrottle))
+      if (needUpdatePing) {
+        let ping = await reportHelper.getPingStatus(this.options.hosts)
+        this.ping = {
+          time: new Date().getTime(),
+          value: ping
+        }
+      }
+      if (needUpdateNetwork) {
+        let network = await reportHelper.getNetworkType()
+        this.network = {
+          time: new Date().getTime(),
+          value: network
+        }
+      }
+      data = Object.assign(data, {
+        network: this.network.value,
+        ping: this.ping.value
+      })
+    } 
+    return data
   }
 
   /**
