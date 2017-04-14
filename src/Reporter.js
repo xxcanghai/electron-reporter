@@ -701,7 +701,11 @@ class Reporter {
       if (files2Report.length === 1) {
         let file = files2Report[0]
         // 文件大小 小于50k 走字符串上报流程
-        let {size} = fs.statSync(file.filePath)
+        let size
+        try {
+          const stat = await fs.statAsync(file.filePath)
+          size = stat.size || 0
+        } catch (e) {}
         if (size < 1024 * 50) {
           return this._push2LogQueue(file)
         } else { // 否则走文件上传流程
