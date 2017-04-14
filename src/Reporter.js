@@ -488,7 +488,7 @@ class Reporter {
     let {filePath} = this._getCurrentTemp(level)
 
     // 手动写入日志
-    fs.appendFile(filePath, record + reportHelper.endOfLine())
+    fs.appendFileSync(filePath, record + reportHelper.endOfLine())
 
     // log4js 自动写入日志
     // log4js写的文件 不做任何处理, 让log4js自动处理(自动根据日期/文件大小分割文件/清除文件等)
