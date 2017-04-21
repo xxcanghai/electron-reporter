@@ -383,11 +383,12 @@ class Reporter {
    * @private
    */
   async _buildBaseData(level) {
+    let levelName = Reporter.getLevelKey(level)
     let data = {
       device: platForm,
       ip: IP,
       time: reportHelper.getTime(),
-      log_level: level,
+      log_level: levelName,
       version: this.getVersion(),
       dev_n: this.getDeviceName(),
       sys_ver: systemVersion,
