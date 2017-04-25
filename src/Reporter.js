@@ -394,7 +394,7 @@ class Reporter {
       sys_ver: systemVersion,
     }
     // 只在windows下调用network和ping, mac下有几率导致nw崩溃
-    if (platForm === 'win') {
+    if (platForm === 'pc') {
       let { pingThrottle, networkThrottle } = this.options
       let needUpdatePing = !this.ping || (this.ping && this.ping.time < (new Date().getTime() - pingThrottle))
       let needUpdateNetwork = !this.network || (this.network && this.network.time < (new Date().getTime() - networkThrottle))
@@ -414,7 +414,7 @@ class Reporter {
       }
       data = Object.assign(data, {
         network: this.network.value,
-        ping: this.ping.value
+        ping: JSON.stringify(this.ping.value)
       })
     } 
     return data
