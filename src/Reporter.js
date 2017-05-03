@@ -414,7 +414,7 @@ class Reporter {
       }
       data = Object.assign(data, {
         network: this.network.value,
-        ping: JSON.stringify(this.ping.value)
+        ping: this.ping.value
       })
     } 
     return data
