@@ -1,6 +1,6 @@
 {
   "name": "electron-reporter",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "A project for report log in electron or nw",
   "repository": "4f2e/electron-reporter",
   "author": "xingyuzhe <yuzhe.xing@qq.com>",
@@ -106,6 +106,9 @@
     "network": "^0.3.2",
     "ping": "^0.2.2",
     "request": "^2.80.0",
-    "win-7zip": "^0.1.0"
+    "win-7zip": "^0.1.0",
+    "asynckit": "^0.4.0",
+    "combined-stream": "^1.0.5",
+    "mime-types": "^2.1.12"
   }
 }
