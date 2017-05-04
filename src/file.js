@@ -2,7 +2,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import md5File from 'md5-file'
-import FormData from 'form-data'
+import FormData from './form-data/index'
 
 export default {
   /**
