@@ -169,7 +169,8 @@ class Reporter {
     // ping获取的时间间隔
     pingThrottle: 15 * 1000,
     // network获取的时间间隔
-    networkThrottle: 15 * 1000
+    networkThrottle: 15 * 1000,
+    noCommandCall: true
   }
 
   constructor(options) {
@@ -395,27 +396,30 @@ class Reporter {
     }
     // 只在windows下调用network和ping, mac下有几率导致nw崩溃
     if (platForm === 'pc') {
-      let { pingThrottle, networkThrottle } = this.options
-      let needUpdatePing = !this.ping || (this.ping && this.ping.time < (new Date().getTime() - pingThrottle))
-      let needUpdateNetwork = !this.network || (this.network && this.network.time < (new Date().getTime() - networkThrottle))
-      if (needUpdatePing) {
-        let ping = await reportHelper.getPingStatus(this.options.hosts)
-        this.ping = {
-          time: new Date().getTime(),
-          value: ping
+      let { pingThrottle, networkThrottle, noCommandCall } = this.options
+
+      if (!noCommandCall) {
+        let needUpdatePing = !this.ping || (this.ping && this.ping.time < (new Date().getTime() - pingThrottle))
+        let needUpdateNetwork = !this.network || (this.network && this.network.time < (new Date().getTime() - networkThrottle))
+        if (needUpdatePing) {
+          let ping = await reportHelper.getPingStatus(this.options.hosts)
+          this.ping = {
+            time: new Date().getTime(),
+            value: ping
+          }
         }
-      }
-      if (needUpdateNetwork) {
-        let network = await reportHelper.getNetworkType()
-        this.network = {
-          time: new Date().getTime(),
-          value: network
+        if (needUpdateNetwork) {
+          let network = await reportHelper.getNetworkType()
+          this.network = {
+            time: new Date().getTime(),
+            value: network
+          }
         }
+        data = Object.assign(data, {
+          network: this.network.value,
+          ping: this.ping.value
+        })
       }
-      data = Object.assign(data, {
-        network: this.network.value,
-        ping: this.ping.value
-      })
     } 
     return data
   }
