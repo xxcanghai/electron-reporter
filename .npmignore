@@ -7,3 +7,4 @@ tools
 .DS_Store
 npm-debug.log
 npm-debug.log.*
+logs
