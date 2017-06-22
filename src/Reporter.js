@@ -6,6 +6,7 @@ import ping from 'ping'
 import request from 'request'
 import path from 'path'
 
+import stringify from 'json-stringify-safe'
 import fs from 'fs-extra-promise'
 import _ from 'lodash'
 import log4js from 'log4js'
@@ -380,16 +381,18 @@ class Reporter {
   /**
    * 得到上报的基础参数
    * @param level
+   * @param eventName
    * @returns {Promise.<{device: (*|string), ip: *, time: (*|number), network: (*|Promise), log_level: *, version: (string|string), dev_n: (string|string), sys_ver: *, ping: (*|Promise.<{}>)}>}
    * @private
    */
-  async _buildBaseData(level) {
+  async _buildBaseData(level, eventName) {
     let levelName = Reporter.getLevelKey(level)
     let data = {
       device: platForm,
       ip: IP,
       time: reportHelper.getTime(),
       log_level: levelName,
+      event_id: eventName,
       version: this.getVersion(),
       dev_n: this.getDeviceName(),
       sys_ver: systemVersion,
@@ -433,28 +436,26 @@ class Reporter {
    * @private
    */
   async _buildData(eventName, _params = {}, level) {
-    let baseData = await this._buildBaseData(level)
-    let str
+    let baseData = await this._buildBaseData(level, eventName)
     let params = Object.assign({}, _params)
+
     Object.keys(params).forEach(key => {
-      if (params[key] instanceof Error) {
-        params[key] = params[key].toString()
+      if (_.isError(params[key])) {
+        params[key] = params[key].stack
+      }
+      if (_.isObject(params[key])) {
+        params[key] = stringify(params[key])
+      }
+      if (/^sv\d+$/.test(key)) {
+        params[key] = String(params[key])
+      }
+      if (/^iv\d+$/.test(key)) {
+        params[key] = parseInt(params[key], 10) || 0
       }
     })
 
-    try {
-      str = JSON.stringify({
-        event: eventName,
-        data: Object.assign({}, baseData, params)
-      })
-    } catch(e) {
-      str = JSON.stringify({
-        event: eventName,
-        data: Object.assign({}, baseData, {
-          error: 'try JSON.stringify failed'
-        })
-      })
-    }
+    let data = Object.assign({}, baseData, params)
+    let str = stringify(data)
     return str
   }
 
@@ -665,7 +666,7 @@ class Reporter {
     })
 
     //todo ...这里为了兼容ios端的特殊格式的处理, 之后加个afterParsedData的hook来传参处理吧
-    const encData = FILE.encrypt(JSON.stringify(filteredData), encryptOptions)
+    const encData = FILE.encrypt(stringify(filteredData), encryptOptions)
     const finalData = '=' + encodeURIComponent(encData)
 
     return {
