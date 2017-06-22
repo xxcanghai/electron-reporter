@@ -469,7 +469,8 @@ class Reporter {
     let filename = levelKey + '.temp-' + moment().format('YYYY-MM-DD')
     let filePath = this._getFilePathByName(filename)
     if (!fs.existsSync(filePath)) {
-      fs.openSync(filePath, 'w')
+      const fd = fs.openSync(filePath, 'w')
+      fs.closeSync(fd)
     }
     return {
       level,
@@ -492,7 +493,7 @@ class Reporter {
     let {filePath} = this._getCurrentTemp(level)
 
     // 手动写入日志
-    fs.appendFile(filePath, record + reportHelper.endOfLine())
+    fs.appendFileSync(filePath, record + reportHelper.endOfLine())
 
     // log4js 自动写入日志
     // log4js写的文件 不做任何处理, 让log4js自动处理(自动根据日期/文件大小分割文件/清除文件等)
@@ -705,7 +706,11 @@ class Reporter {
       if (files2Report.length === 1) {
         let file = files2Report[0]
         // 文件大小 小于50k 走字符串上报流程
-        let {size} = fs.statSync(file.filePath)
+        let size
+        try {
+          const stat = await fs.statAsync(file.filePath)
+          size = stat.size || 0
+        } catch (e) {}
         if (size < 1024 * 50) {
           return this._push2LogQueue(file)
         } else { // 否则走文件上传流程
