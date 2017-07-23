@@ -2,7 +2,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import md5File from 'md5-file'
-import FormData from './form-data/index'
+import FormData from 'form-data'
 
 export default {
   /**
@@ -15,9 +15,9 @@ export default {
       iv: crypto.randomBytes(16).toString('base64')
     }
   },
-  getMd5File(path) {
+  getMd5File(filePath) {
     return new Promise((resolve, reject) => {
-      md5File(path, (err, hash) => {
+      md5File(filePath, (err, hash) => {
         if (err) reject(err)
         resolve(hash)
       })
@@ -138,5 +138,33 @@ export default {
         })
       })
     })
+  },
+  /**
+   * 读取文件并得到分行数据
+   * @param filePath
+   * @param isUnlinkFile
+   * @returns {Promise.<{filePath: *, lines: Array}>}
+   * @private
+   */
+  async getFileLines(filePath, isUnlinkFile) {
+    const separatorRegex = /\r?\n/g
+
+    let content = await fs.readFileAsync(filePath, 'utf8')
+    let lines = content.split(separatorRegex)
+
+    // todo 为什么这么多空行?
+    lines = lines.filter(line => {
+      return line.trim()
+    })
+
+    // 如果指明了要删除文件
+    if (isUnlinkFile) {
+      fs.unlinkSync(filePath)
+    }
+
+    return {
+      filePath,
+      lines,
+    }
   }
 }

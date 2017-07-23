@@ -1,5 +1,5 @@
 import _ from 'lodash'
-import {queue} from 'd3-queue'
+import { queue } from 'd3-queue'
 
 export default class ReportQueue {
   constructor(options = {}) {

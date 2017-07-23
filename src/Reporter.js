@@ -1,11 +1,6 @@
 /** @fileOverview 给electron/nw等类似客户端用的日志上报模块 **/
-import ip from 'ip'
-import network from 'network'
-import os from 'os'
-import ping from 'ping'
 import request from 'request'
 import path from 'path'
-
 import stringify from 'json-stringify-safe'
 import fs from 'fs-extra-promise'
 import _ from 'lodash'
@@ -14,119 +9,19 @@ import moment from 'moment'
 import unzip from 'cross-unzip'
 import FILE from './file'
 import Queue from './ReportQueue'
+import HELPER from './helper'
 
-// 一些辅助方法
-const reportHelper = {
-  endOfLine() {
-    return os.EOL || '\n'
-  },
-  t2p(thunk, ...args) {
-    return new Promise((resolve, reject) => {
-      thunk(...args, (err, ...rest) => {
-        if (err) reject(err)
-        else {
-          resolve(rest.length > 1 ? rest : rest[0])
-        }
-      })
-    })
-  },
-  /**
-   * 获取当前设备所属平台
-   * @returns {string}
-   */
-  getPlatform() {
-    const IS_WIN = process.platform === 'win32'
-    const IS_MAC = process.platform === 'darwin'
-    return IS_MAC ? 'mac' : (IS_WIN ? 'pc' : 'linux')
-  },
-
-  /**
-   * 上报时的时间戳
-   * @returns {number}
-   */
-  getTime() {
-    return new Date().getTime()
-  },
-
-  /**
-   * 获得当前设备ip地址
-   * @returns {*}
-   */
-  getIP() {
-    return ip.address()
-  },
-
-  /**
-   * 获得当前设备的系统版本
-   */
-  getSystemVersion() {
-    return os.release()
-  },
-
-  /**
-   * 获取当前设备的网络环境 有5种  wire|wireless|FireWire|Thunderbolt|Other
-   * @returns {Promise}
-   */
-  async getNetworkType() {
-    return new Promise((resolve) => {
-      network.get_active_interface((err, res) => {
-        if (res && res.type) {
-          resolve(res.type)
-        } else {
-          resolve('unknown')
-        }
-      })
-    })
-  },
-
-  /**
-   * 获取指定服务器的延时数值
-   * @returns {Promise.<{}>}
-   */
-  async getPingStatus(hosts = []) {
-    const promises = hosts.map(async(host, idx) => {
-      const p = await ping.promise.probe(host)
-      return {host, time: p.avg}
-    })
-    const pArray = await Promise.all(promises)
-    const pObject = {}
-    _.reduce(pArray, (acc, val) => {
-      acc[val.host] = val.time
-      return acc
-    }, pObject)
-    return pObject
-  }
-}
-
-const IP = reportHelper.getIP()
-const systemVersion = reportHelper.getSystemVersion()
-const platForm = reportHelper.getPlatform()
+const LEVELS = log4js.levels
+// 每隔3天定时清理日志文件
+const CLEAR_INTERVAL = 1000 * 60 * 60 * 24 * 3
 
 class Reporter {
 
-  static LEVELS = {
-    DEBUG: 1,
-    INFO: 2,
-    WARN: 3,
-    ERROR: 4
-  }
+  static LEVELS = LEVELS
 
-  static helper = reportHelper
+  static FILE = FILE
 
-  /**
-   * 根据level的value取得level的key
-   * @param val
-   * @returns {string}
-   */
-  static getLevelKey(val) {
-    let name
-    Object.keys(Reporter.LEVELS).forEach(key => {
-      if (Reporter.LEVELS[key] === val) {
-        name = key
-      }
-    })
-    return name
-  }
+  static HELPER = HELPER
 
   static defaultOptions = {
     // 上报地址
@@ -140,18 +35,16 @@ class Reporter {
     // log文件存储目录
     dir: process.cwd(),
     // 默认上报级别
-    level: Reporter.LEVELS.WARN,
+    level: 'warn',
     // 不同级别类型日志是否完全保存在本地, 默认全部保存在本地
     // 一旦通过构造函数设置后, 便不可变更, 变更后也是无效的
-    localLogLevel: 0,
+    localLogLevel: 'all',
     // 是否打印控制台log, 同上
-    consoleLogLevel: 0,
+    consoleLogLevel: 'all',
     // 定时上报时间间隔, 即便没积攒达到上报数量阈值，只要达到时间间隔，仍然上报
     interval: 1000 * 60 * 5,
-    // 上报积攒数量阈值, 积攒到阈值就上报
-    threshold: 500,
-    // 一次上报日志数量允许的最大值
-    maxCount: 500,
+    // 上报积攒数量阈值, 积攒到阈值就上报 50k
+    threshold: 50 * 1024,
     // 文件命名的前缀
     filenamePrefix: '',
     // 上报时需要ping的域名集合
@@ -165,24 +58,24 @@ class Reporter {
       key: '78afc8512559b62f',
       iv: '78afc8512559b62f',
       clearEncoding: 'utf8',
-      algorithm: 'aes-128-cbc'
+      algorithm: 'aes-128-cbc',
     },
     // ping获取的时间间隔
     pingThrottle: 15 * 1000,
     // network获取的时间间隔
     networkThrottle: 15 * 1000,
-    noCommandCall: true
+    // 不调用 ping和network
+    noCommandCall: true,
   }
 
   constructor(options) {
     /**
      * 初始化配置参数
-     * @type {{url: string, deviceName: string, version: string, dir: string, level: string, interval: number, threshold: number, filenamePrefix: string, hosts: array}}
      */
     this.options = Object.assign({}, Reporter.defaultOptions, options)
 
     // 如果指明的目录不存在 要先创建
-    const {dir} = this.options
+    const { dir } = this.options
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir)
     }
@@ -192,7 +85,7 @@ class Reporter {
      * @type {ReportQueue}
      */
     this.logQueue = new Queue({
-      processFunction: this.report.bind(this)
+      processFunction: this.report.bind(this),
     })
 
     /**
@@ -200,7 +93,7 @@ class Reporter {
      * @type {ReportQueue}
      */
     this.uploadQueue = new Queue({
-      processFunction: this.upload.bind(this)
+      processFunction: this.upload.bind(this),
     })
 
     /**
@@ -210,24 +103,27 @@ class Reporter {
     this.loggers = {}
 
     // 根据level生成log4js配置
-    let appenders = Object.keys(Reporter.LEVELS).map((key) => {
-      let appender = this._buildAppender(key)
-      this.loggers[Reporter.LEVELS[key]] = appender.category
-      return appender
+    let appenderMap = _.mapValues(Reporter.LEVELS, level => {
+      return this._buildAppender(level)
     })
+
+    let appenders = _.values(appenderMap)
 
     // 配置log4js
     log4js.configure({
-      appenders
+      appenders,
     })
 
     // 根据level把logger实例填充入loggers
-    appenders.forEach(appender => {
-      Object.keys(this.loggers).forEach(key => {
-        if (appender.category === this.loggers[key]) {
-          this.loggers[key] = log4js.getLogger(appender.category)
-        }
-      })
+    _.map(appenderMap, (appender, levelKey) => {
+      this.loggers[levelKey] = log4js.getLogger(appender.category)
+    })
+
+    // 生成快捷方法
+    _.map(Reporter.LEVELS, (level, levelKey) => {
+      this[levelKey.toLowerCase()] = (eventName, data) => {
+        this.log(eventName, data, levelKey)
+      }
     })
 
     this._addReportTimer()
@@ -254,6 +150,8 @@ class Reporter {
       delete options.consoleLogLevel
       console.warn('configure consoleLogLevel is not supported')
     }
+
+    // 重设计时器
     let { interval } = this.options
     this.options = Object.assign(this.options, options)
     if (this.options.interval && interval !== this.options.interval) {
@@ -277,11 +175,10 @@ class Reporter {
    * @private
    */
   _addClearTimer() {
-    let interval = 1000 * 60 * 60 * 24 * 3 // 每隔3天定时清理
     if (this.clearTimer) {
       clearInterval(this.clearTimer)
     }
-    this.clearTimer = setInterval(this.clearHistoryFiles.bind(this), interval)
+    this.clearTimer = setInterval(this.clearHistoryFiles.bind(this), CLEAR_INTERVAL)
   }
 
   /**
@@ -291,7 +188,7 @@ class Reporter {
    * @private
    */
   _getFilePathByName(name) {
-    let {dir} = this.options
+    let { dir } = this.options
     return path.join(dir, name)
   }
 
@@ -301,7 +198,7 @@ class Reporter {
    */
   async clearHistoryFiles() {
     try {
-      let {historyKeepDays, tempKeepDays} = this.options
+      let { historyKeepDays, tempKeepDays } = this.options
       let _clearCb = (file) => {
         fs.unlinkSync(this._getFilePathByName(file.filename))
       }
@@ -319,6 +216,10 @@ class Reporter {
     }
   }
 
+  toLevel(levelKey) {
+    return Reporter.LEVELS[levelKey]
+  }
+
   /**
    * 每种日志类型创建一个文件, 创建一个logger实例
    * @param levelKey
@@ -326,9 +227,11 @@ class Reporter {
    * @private
    */
   _buildAppender(levelKey) {
-    let {filenamePrefix, localLogLevel, consoleLogLevel} = this.options
+    let { filenamePrefix, localLogLevel, consoleLogLevel } = this.options
+    localLogLevel = this.toLevel(localLogLevel)
+    consoleLogLevel = this.toLevel(consoleLogLevel)
     let name = filenamePrefix + levelKey
-    let level = Reporter.LEVELS[levelKey]
+    let level = this.toLevel(levelKey)
     let appender = {
       type: 'clustered',
       appenders: [],
@@ -336,14 +239,14 @@ class Reporter {
     }
 
     // 如果当前上报级别大于等于设置的控制台log级别
-    if (level >= consoleLogLevel) {
+    if (level.isGreaterThanOrEqualTo(consoleLogLevel)) {
       appender.appenders.push({
         type: 'console'
       })
     }
 
     // 如果当前上报级别大于等于设置的本地文件log级别
-    if (level >= localLogLevel) {
+    if (level.isGreaterThanOrEqualTo(localLogLevel)) {
       appender.appenders.push({
         type: 'dateFile',
         absolute: true,
@@ -354,7 +257,7 @@ class Reporter {
         alwaysIncludePattern: true,
         layout: {
           type: 'pattern',
-          pattern: "%r %p %c => %m%n"
+          pattern: '%r %p %c => %m%n'
         }
       })
     }
@@ -385,45 +288,44 @@ class Reporter {
    * @returns {Promise.<{device: (*|string), ip: *, time: (*|number), network: (*|Promise), log_level: *, version: (string|string), dev_n: (string|string), sys_ver: *, ping: (*|Promise.<{}>)}>}
    * @private
    */
-  async _buildBaseData(level, eventName) {
-    let levelName = Reporter.getLevelKey(level)
+  async _buildBaseData(levelKey, eventName) {
     let data = {
-      device: platForm,
-      ip: IP,
-      time: reportHelper.getTime(),
-      log_level: levelName,
+      device: HELPER.platForm,
+      ip: HELPER.IP,
+      time: HELPER.getTime(),
+      log_level: levelKey,
       event_id: eventName,
       version: this.getVersion(),
       dev_n: this.getDeviceName(),
-      sys_ver: systemVersion,
+      sys_ver: HELPER.systemVersion,
     }
     // 只在windows下调用network和ping, mac下有几率导致nw崩溃
-    if (platForm === 'pc') {
-      let { pingThrottle, networkThrottle, noCommandCall } = this.options
-
-      if (!noCommandCall) {
-        let needUpdatePing = !this.ping || (this.ping && this.ping.time < (new Date().getTime() - pingThrottle))
-        let needUpdateNetwork = !this.network || (this.network && this.network.time < (new Date().getTime() - networkThrottle))
-        if (needUpdatePing) {
-          let ping = await reportHelper.getPingStatus(this.options.hosts)
-          this.ping = {
-            time: new Date().getTime(),
-            value: ping
-          }
-        }
-        if (needUpdateNetwork) {
-          let network = await reportHelper.getNetworkType()
-          this.network = {
-            time: new Date().getTime(),
-            value: network
-          }
-        }
-        data = Object.assign(data, {
-          network: this.network.value,
-          ping: this.ping.value
-        })
-      }
-    } 
+    // if (platForm === 'pc') {
+    //   let { pingThrottle, networkThrottle, noCommandCall } = this.options
+    //
+    //   if (!noCommandCall) {
+    //     let needUpdatePing = !this.ping || (this.ping && this.ping.time < (new Date().getTime() - pingThrottle))
+    //     let needUpdateNetwork = !this.network || (this.network && this.network.time < (new Date().getTime() - networkThrottle))
+    //     if (needUpdatePing) {
+    //       let ping = await HELPER.getPingStatus(this.options.hosts)
+    //       this.ping = {
+    //         time: new Date().getTime(),
+    //         value: ping
+    //       }
+    //     }
+    //     if (needUpdateNetwork) {
+    //       let network = await HELPER.getNetworkType()
+    //       this.network = {
+    //         time: new Date().getTime(),
+    //         value: network
+    //       }
+    //     }
+    //     data = Object.assign(data, {
+    //       network: this.network.value,
+    //       ping: this.ping.value
+    //     })
+    //   }
+    // }
     return data
   }
 
@@ -431,12 +333,12 @@ class Reporter {
    * 得到需要上报的数据
    * @param eventName
    * @param _params
-   * @param level
+   * @param levelKey
    * @returns {Promise.<*>}
    * @private
    */
-  async _buildData(eventName, _params = {}, level) {
-    let baseData = await this._buildBaseData(level, eventName)
+  async _buildData(eventName, _params = {}, levelKey) {
+    let baseData = await this._buildBaseData(levelKey, eventName)
     let params = Object.assign({}, _params)
 
     Object.keys(params).forEach(key => {
@@ -461,20 +363,20 @@ class Reporter {
 
   /**
    * 获取当前日志文件信息
-   * @param level
+   * @param levelKey
    * @returns {{level: *, levelKey: string, filePath}}
    * @private
    */
-  _getCurrentTemp(level) {
-    let levelKey = Reporter.getLevelKey(level)
+  _getCurrentTemp(levelKey) {
     let filename = levelKey + '.temp-' + moment().format('YYYY-MM-DD')
     let filePath = this._getFilePathByName(filename)
+    // 创建文件
     if (!fs.existsSync(filePath)) {
       const fd = fs.openSync(filePath, 'w')
       fs.closeSync(fd)
     }
     return {
-      level,
+      level: this.toLevel(levelKey),
       levelKey,
       filename,
       filePath
@@ -488,63 +390,41 @@ class Reporter {
    * @param level
    * @returns {Promise.<void>}
    */
-  async log(eventName, data, level = Reporter.LEVELS.INFO) {
-    const record = await this._buildData(eventName, data, level)
+  async log(eventName, data, levelKey) {
+    levelKey = levelKey || this.options.level
+    const record = await this._buildData(eventName, data, levelKey)
     // 这个手动创建的文件是为了上报用(上报完就删除上报过的数据), 不存在就创建一个
-    let {filePath} = this._getCurrentTemp(level)
+    let { filePath } = this._getCurrentTemp(levelKey)
 
     // 手动写入日志
-    fs.appendFileSync(filePath, record + reportHelper.endOfLine())
+    fs.appendFileSync(filePath, record + HELPER.endOfLine())
 
     // log4js 自动写入日志
     // log4js写的文件 不做任何处理, 让log4js自动处理(自动根据日期/文件大小分割文件/清除文件等)
-    let logger = this.loggers[level]
-    // 调用log4js 写入log
-    if (level === Reporter.LEVELS.INFO) {
-      logger.info(record)
+    let logger = this.loggers[levelKey]
+    let funcName = levelKey.toLowerCase()
+
+    if (logger && typeof logger[funcName] === 'function') {
+      // 调用log4js 写入log
+      logger[funcName](record)
+      this.process()
+    } else {
+      this._reportSelfError(`level ${levelKey} not exists!`, e)
     }
-    if (level === Reporter.LEVELS.DEBUG) {
-      logger.debug(record)
-    }
-    if (level === Reporter.LEVELS.WARN) {
-      logger.warn(record)
-    }
-    if (level === Reporter.LEVELS.ERROR) {
-      logger.error(record)
-    }
-    this.process()
   }
-
-  info(eventName, data) {
-    return this.log(eventName, data, Reporter.LEVELS.INFO)
-  }
-
-  debug(eventName, data) {
-    return this.log(eventName, data, Reporter.LEVELS.DEBUG)
-  }
-
-  warn(eventName, data) {
-    return this.log(eventName, data, Reporter.LEVELS.WARN)
-  }
-
-  error(eventName, data) {
-    return this.log(eventName, data, Reporter.LEVELS.ERROR)
-  }
-
   /**
    * 获取最近N天的日志文件
    * @param num
    * @param isTemp
-   * @param level
-   * @returns {Promise.<void>}fgetRecentFiles
+   * @param levelKey
+   * @returns {Promise.<void>}
    */
-  async getRecentFiles(num, isTemp, level) {
-    let levelKey = level ? Reporter.getLevelKey(level) : '.*'
+  async getRecentFiles(num, isTemp, levelKey = '.*') {
     let tail = isTemp ? 'temp-' : 'log-'
     let dateRegex = /\d{4}-\d{2}-\d{2}/
     let datePattern = dateRegex.toString().replace(/\//g, '')
     let regStr = `^${levelKey}\.${tail}${datePattern}$`
-    const {dir} = this.options
+    const { dir } = this.options
     const regex = new RegExp(regStr)
     let now = moment()
     let _mapCb = (filename) => {
@@ -565,7 +445,7 @@ class Reporter {
       let execResult = dateRegex.exec(filename)
       execResult = execResult ? execResult[0] : null
       let diff = moment(execResult, 'YYYY-MM-DD').diff(now, 'days')
-      return diff > -num //判断不要改成diff<-num, 存在NaN情况也应删除
+      return diff > -num // 判断不要改成diff<-num, 存在NaN情况也应删除
     })
 
     let historyFiles = files.filter(name => {
@@ -577,59 +457,7 @@ class Reporter {
 
     return {
       recentFiles,
-      historyFiles
-    }
-  }
-
-  /**
-   * 根据当前日志文件 获取 日志记录/行数
-   * @private
-   */
-  async _getCurrentFileLines(level, isUnlinkFile) {
-    let {filePath} = await this._getCurrentTemp(level)
-    return await this._getFileLines(filePath, isUnlinkFile)
-  }
-
-  /**
-   * 根据日志级别和历史天数 读取日志记录/行数
-   * @param filePath
-   * @param isUnlinkFile
-   * @returns {Promise.<{filePath: *, lines: Array, leftLines: Array, allLines: Array.<T>}>}
-   * @private
-   */
-  async _getFileLines(filePath, isUnlinkFile) {
-    const {maxCount} = this.options
-    const separatorRegex = /\r?\n/g
-
-    let lines = []
-    let leftLines = []
-
-    let content = await fs.readFileAsync(filePath, 'utf8')
-    let curLines = content.split(separatorRegex)
-
-    // todo 为什么这么多空行?
-    curLines = curLines.filter(line => {
-      return line.trim()
-    })
-
-    // 如果指明了要删除文件
-    if (isUnlinkFile) {
-      fs.unlinkSync(filePath)
-    }
-
-    // 根据macCount把数据分成2段
-    if (lines.length > maxCount) {
-      lines = curLines.slice(0, maxCount)
-      leftLines = curLines.slice(maxCount)
-    } else {
-      lines = curLines
-    }
-
-    return {
-      filePath,
-      lines,
-      leftLines,
-      allLines: curLines.slice(0)
+      historyFiles,
     }
   }
 
@@ -639,39 +467,34 @@ class Reporter {
    * @private
    */
   async _packageData(file) {
-    const {encryptOptions} = this.options
-    const {filePath} = file
-    const linesInfo = await this._getFileLines(filePath, true)
-
-    let data = []
-    let lines = linesInfo.allLines
-
-    lines.reduce((acc, line) => {
+    const { encryptOptions } = this.options
+    const { filePath } = file
+    const linesInfo = await FILE.getFileLines(filePath, true)
+    let data = linesInfo.lines.reduce((acc, line) => {
       try {
         acc.push(JSON.parse(line))
       } catch (e) {
-        // this._reportSelfError(e)
-        console.error('json parse line failed', line)
+        this._reportSelfError('json parse line failed', e)
       }
       return acc
-    }, data)
+    }, [])
 
     data = _.compact(data)
 
     if (!data.length) {
       return linesInfo
     }
-    const filteredData = _.sortBy(data, function (data) {
-      return -data.time
+    const filteredData = _.sortBy(data, obj => {
+      return -obj.time
     })
 
-    //todo ...这里为了兼容ios端的特殊格式的处理, 之后加个afterParsedData的hook来传参处理吧
+    // todo ...这里为了兼容ios端的特殊格式的处理, 之后加个afterParsedData的hook来传参处理吧
     const encData = FILE.encrypt(stringify(filteredData), encryptOptions)
     const finalData = '=' + encodeURIComponent(encData)
 
     return {
       data: finalData,
-      linesInfo
+      linesInfo,
     }
   }
 
@@ -685,17 +508,18 @@ class Reporter {
   async process(isForce) {
     // 达到阈值 或者 指明强制上报
     if (isForce) {
-      const {level, tempKeepDays} = this.options
+      const { level, tempKeepDays, threshold } = this.options
+      const curLevel = this.toLevel(level)
       // 得到真正允许上报的级别
-      const filterdLevels = Object.keys(Reporter.LEVELS).filter(key => {
-        return Reporter.LEVELS[key] >= level
+      const filterdLevels = _.filter(Reporter.LEVELS, level => {
+        return level.isGreaterThanOrEqualTo(curLevel)
       })
 
       // 待上传的文件列表
       let files2Report = []
 
-      let filesPromise = filterdLevels.map(curKey => {
-        return this.getRecentFiles(tempKeepDays, true, Reporter.LEVELS[curKey])
+      let filesPromise = filterdLevels.map(levelKey => {
+        return this.getRecentFiles(tempKeepDays, true, levelKey)
       })
 
       let files = await Promise.all(filesPromise)
@@ -711,12 +535,14 @@ class Reporter {
         try {
           const stat = await fs.statAsync(file.filePath)
           size = stat.size || 0
-        } catch (e) {}
-        if (size < 1024 * 50) {
-          return this._push2LogQueue(file)
-        } else { // 否则走文件上传流程
-          return this._push2UploadQueue(files2Report)
+        } catch (e) {
+          this._reportSelfError('reporter process', e)
         }
+        if (size < threshold) {
+          return this._push2LogQueue(file)
+        }
+        // 否则走文件上传流程
+        return this._push2UploadQueue(files2Report)
       } else if (files2Report.length > 1) { // 多文件直接走文件上传流程
         return this._push2UploadQueue(files2Report)
       }
@@ -730,7 +556,7 @@ class Reporter {
    * @private
    */
   async _push2UploadQueue(files) {
-    const {encryptOptions} = this.options
+    const { encryptOptions } = this.options
     let packageBaseName = 'package'
     let packageExt = '.zip'
     let packageName = packageBaseName + packageExt
@@ -756,12 +582,12 @@ class Reporter {
 
     // 压缩成zip
     try {
-      await reportHelper.t2p(unzip.zip, packageDir, packagePath)
+      await HELPER.t2p(unzip.zip, packageDir, packagePath)
 
       // 等待加密完成
       await FILE.encryptFile({
         filename: packageName,
-        filePath: packagePath
+        filePath: packagePath,
       }, encryptOptions, encryptPath)
 
       // 删除zip及加密后文件
@@ -804,7 +630,11 @@ class Reporter {
       let _toRemovePath = path.join(packageDir, _toRemove)
       _toRemovePromise.push(fs.unlinkAsync(_toRemovePath))
     })
-    await Promise.all(_toRemovePromise)
+    try {
+      await Promise.all(_toRemovePromise)
+    } catch (e) {
+      this._reportSelfError('清除待打包目录', e)
+    }
   }
 
   /**
@@ -815,7 +645,7 @@ class Reporter {
    */
   async _push2LogQueue(file) {
     try {
-      let {data, linesInfo} = await this._packageData(file)
+      let { data, linesInfo } = await this._packageData(file)
       if (!data) {
         return
       }
@@ -826,7 +656,7 @@ class Reporter {
         } else {
           console.log('job fail::: try recover data')
           // 上报失败再把所有数据回写入当前日志文件
-          this._recoverData(linesInfo.allLines, linesInfo.filePath)
+          this._recoverData(linesInfo.lines, linesInfo.filePath)
         }
       })
     } catch (e) {
@@ -843,14 +673,14 @@ class Reporter {
   static responseValidator(response) {
     if (response && response.statusCode === 200) {
       try {
-        const {status} = JSON.parse(response.body)
+        const { status } = JSON.parse(response.body)
         if (status === 0) {
           return true
         }
-        console.error('report::: status is not 0')
+        this._reportSelfError('report::: status is not 0')
         return false
       } catch (e) {
-        console.error('responseValidator parse body failed')
+        this._reportSelfError('responseValidator parse body failed')
         return false
       }
     }
@@ -886,36 +716,44 @@ class Reporter {
       if (lines && lines.length) {
         let records = ''
         lines.forEach(line => {
-          records += line + reportHelper.endOfLine()
+          records += line + HELPER.endOfLine()
         })
         fs.appendFile(filepath, records)
       }
     } catch (e) {
-      console.error(e)
+      this._reportSelfError('recover data failed', e)
     }
   }
 
   /**
    * 上报到远程服务器
    * @param data
-   * @param uri
+   * @param url
    * @returns {Promise}
    * @private
    */
-  async _report2Remote(data, uri) {
-    const body = data
-
+  async _report2Remote(data, url) {
     const headers = {
       'User-Agent': 'Super Agent/0.0.1',
-      'content-type': 'text/plain'
+      'content-type': 'text/plain',
+    }
+
+    const params = {
+      url,
+      body: data,
+      headers,
+      timeout: 5000,
     }
 
     return new Promise((resolve, reject) => {
-      request({method: 'POST', uri, body, headers, timeout: 5000}, function (error, response) {
-          if (error) reject(error)
-          resolve(response)
+      request.post(params, (error, response) => {
+        if (error) {
+          reject(error)
+          this._reportSelfError('report2Remote failed', error)
+          return
         }
-      )
+        resolve(response)
+      })
     })
   }
 
@@ -931,18 +769,19 @@ class Reporter {
     let { encryptOptions } = this.options
     md5 = FILE.encrypt(md5, encryptOptions)
     let params = {
-      a: encodeURIComponent(md5.toString('base64'))
+      a: encodeURIComponent(md5.toString('base64')),
     }
     try {
-      let response = await reportHelper.t2p(FILE.uploadFile, {
+      let response = await HELPER.t2p(FILE.uploadFile, {
         url,
         params,
-        filePath
+        filePath,
       })
       // console.log('response', response)
       return response
     } catch (e) {
       this._reportSelfError('_upload2Remote failed')
+      return false
     }
   }
 
@@ -951,8 +790,11 @@ class Reporter {
    * @param args
    * @private
    */
-  _reportSelfError(...args) {
-    console.error(...args)
+  _reportSelfError(text, error) {
+    this.error('reporterError', {
+      sv1: error,
+      sv2: text,
+    })
   }
 
   /**

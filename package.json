@@ -1,6 +1,6 @@
 {
   "name": "electron-reporter",
-  "version": "0.1.12",
+  "version": "0.2.0",
   "description": "A project for report log in electron or nw",
   "repository": "4f2e/electron-reporter",
   "author": "xingyuzhe <yuzhe.xing@qq.com>",
@@ -100,7 +100,7 @@
     "combined-stream": "^1.0.5",
     "cross-unzip": "^0.2.1",
     "d3-queue": "^3.0.4",
-    "form-data": "^2.1.2",
+    "form-data": "^2.2.0",
     "fs-extra-promise": "^0.4.1",
     "ip": "^1.1.5",
     "json-stringify-safe": "^5.0.1",
@@ -109,8 +109,6 @@
     "md5-file": "^3.1.1",
     "mime-types": "^2.1.12",
     "moment": "^2.17.1",
-    "network": "^0.3.2",
-    "ping": "^0.2.2",
     "request": "^2.80.0",
     "win-7zip": "^0.1.0"
   }
